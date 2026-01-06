@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>好友拆帳助手 - 雲端同步版</title>
-    <!-- 基礎依賴加載 -->
+    <!-- 核心庫加載 -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -25,12 +25,13 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- Firebase 模組初始化 -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signOut, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, getDocs, addDoc, query, onSnapshot, deleteDoc, writeBatch, updateDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+    <!-- Firebase SDK (使用統一載入方式確保順序) -->
+    <script src="https://www.gstatic.com/firebasejs/11.1.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.1.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore-compat.js"></script>
 
+    <script type="babel">
+        // Firebase 初始化
         const firebaseConfig = {
             apiKey: "AIzaSyCf3gdvdTMm5BFXjho7_xdQjE0eH4JSAzM",
             authDomain: "keep-40f68.firebaseapp.com",
@@ -41,33 +42,23 @@
             measurementId: "G-D6J8P9967X"
         };
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        // 初始化 Firebase 並定義常用方法
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.firestore();
         const APP_ID = 'expense-splitter-v2';
 
-        // 將工具暴露給全域
-        window.FB_UTILS = { auth, db, APP_ID, collection, doc, setDoc, getDocs, addDoc, query, onSnapshot, deleteDoc, writeBatch, updateDoc, signOut, signInAnonymously, onAuthStateChanged };
-    </script>
-
-    <script type="babel">
         const { useState, useEffect, useRef, useMemo } = React;
 
-        // 安全圖標元件
+        // 安全圖標元件：防止外部 content.js 報錯崩潰
         const Icon = ({ name, size = 18, className = "", ...props }) => {
-            const [hasError, setHasError] = useState(false);
-            
-            // 確保 lucide 已載入
-            if (!window.lucide || !window.lucide[name] || hasError) {
-                return <span className={`inline-block w-[${size}px] h-[${size}px] bg-gray-100 rounded-sm ${className}`}></span>;
-            }
-
             try {
-                const LucideIcon = window.lucide[name];
+                const LucideIcon = window.lucide ? window.lucide[name] : null;
+                if (!LucideIcon) return <span className={`inline-block w-[18px] h-[18px] bg-gray-100 ${className}`}></span>;
                 return <LucideIcon size={size} className={className} {...props} />;
             } catch (e) {
-                console.error(`Icon error: ${name}`, e);
-                setHasError(true);
                 return null;
             }
         };
@@ -111,102 +102,94 @@
             const [lastSettlementData, setLastSettlementData] = useState(null);
             const receiptRef = useRef(null);
 
-            // 初始化與 Auth 同步
+            // Auth 初始化與同步功能
             useEffect(() => {
-                const interval = setInterval(() => {
-                    if (window.FB_UTILS) {
-                        clearInterval(interval);
-                        const fb = window.FB_UTILS;
-                        const unsub = fb.onAuthStateChanged(fb.auth, (u) => {
-                            if (u) {
-                                setUser(u);
-                                setUidInput(u.uid);
-                            } else {
-                                fb.signInAnonymously(fb.auth);
-                            }
-                            setLoading(false);
-                        });
-                        return () => unsub();
+                const unsubscribe = auth.onAuthStateChanged((u) => {
+                    if (u) {
+                        setUser(u);
+                        setUidInput(u.uid);
+                    } else {
+                        auth.signInAnonymously();
                     }
-                }, 100);
-                return () => clearInterval(interval);
+                    setLoading(false);
+                });
+                return () => unsubscribe();
             }, []);
 
-            // 監聽帳本列表
+            // 監聽帳本清單
             useEffect(() => {
-                if (!user || !window.FB_UTILS) return;
-                const fb = window.FB_UTILS;
-                const q = fb.query(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books'));
-                
-                const unsub = fb.onSnapshot(q, (snapshot) => {
-                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setBooks(data);
-                    if (!currentBookId && data.length > 0) setCurrentBookId(data[0].id);
-                });
+                if (!user) return;
+                const unsub = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books')
+                    .onSnapshot((snapshot) => {
+                        const booksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setBooks(booksData);
+                        if (!currentBookId && booksData.length > 0) setCurrentBookId(booksData[0].id);
+                    }, (err) => console.error(err));
                 return () => unsub();
             }, [user, currentBookId]);
 
-            // 監聽當前帳本內容
+            // 監聽當前帳本資料
             useEffect(() => {
-                if (!user || !currentBookId || !window.FB_UTILS) return;
-                const fb = window.FB_UTILS;
+                if (!user || !currentBookId) return;
                 
                 const currentBook = books.find(b => b.id === currentBookId);
                 if (currentBook && currentBook.participants) setParticipants(currentBook.participants);
 
-                // 支出明細
-                const qExp = fb.query(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses'));
-                const unsubExp = fb.onSnapshot(qExp, (snapshot) => {
-                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setItems(data.filter(i => i.status !== 'settled').sort((a, b) => b.timestamp - a.timestamp));
-                });
+                const unsubExp = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid)
+                    .collection('books').doc(currentBookId).collection('expenses')
+                    .onSnapshot((snapshot) => {
+                        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setItems(data.filter(i => i.status !== 'settled').sort((a, b) => b.timestamp - a.timestamp));
+                    });
 
-                // 歷史結算
-                const qSet = fb.query(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'settlements'));
-                const unsubSet = fb.onSnapshot(qSet, (snapshot) => {
-                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setSettlements(data.sort((a, b) => b.settledAt - a.settledAt));
-                });
+                const unsubSet = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid)
+                    .collection('books').doc(currentBookId).collection('settlements')
+                    .onSnapshot((snapshot) => {
+                        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setSettlements(data.sort((a, b) => b.settledAt - a.settledAt));
+                    });
 
                 return () => { unsubExp(); unsubSet(); };
             }, [user, currentBookId, books]);
 
+            const handleSignOut = async () => {
+                await auth.signOut();
+                window.location.reload();
+            };
+
             const handleAddBook = async () => {
-                if (!newBookName.trim() || !user || !window.FB_UTILS) return;
-                const fb = window.FB_UTILS;
+                if (!newBookName.trim() || !user) return;
                 try {
-                    const docRef = await fb.addDoc(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books'), {
+                    const docRef = await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').add({
                         name: newBookName, participants: ['我', '朋友'], createdAt: Date.now()
                     });
                     setNewBookName('');
                     setIsAddingBook(false);
                     setCurrentBookId(docRef.id);
                     setView('active');
-                } catch (e) { setErrorMessage("新增失敗"); }
+                } catch (e) { setErrorMessage("新增帳本失敗"); }
             };
 
             const updateParticipants = async (newParticipants) => {
-                if (!user || !currentBookId || !window.FB_UTILS) return;
-                const fb = window.FB_UTILS;
+                if (!user || !currentBookId) return;
                 setParticipants(newParticipants);
                 try {
-                    await fb.updateDoc(fb.doc(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId), { participants: newParticipants });
-                } catch (e) { setErrorMessage("同步成員失敗"); }
+                    await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).update({ participants: newParticipants });
+                } catch (e) { setErrorMessage("更新成員失敗"); }
             };
 
             const handleQuickAdd = async () => {
-                if (!quickInput.name || !quickInput.amount || !currentBookId || !window.FB_UTILS) { setErrorMessage("請輸入內容"); return; }
-                const fb = window.FB_UTILS;
+                if (!quickInput.name || !quickInput.amount || !currentBookId) { setErrorMessage("請輸入內容"); return; }
                 const amount = parseFloat(quickInput.amount);
                 const isForeign = quickInput.currency !== 'TWD';
-                const finalAmount = isForeign ? amount * exchangeRate : amount;
+                const finalAmountInTWD = isForeign ? amount * exchangeRate : amount;
                 
                 try {
-                    await fb.addDoc(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses'), {
+                    await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses').add({
                         name: quickInput.name, 
                         rawAmount: isForeign ? amount : null, 
                         currency: isForeign ? quickInput.currency : 'TWD',
-                        amount: finalAmount, 
+                        amount: finalAmountInTWD, 
                         payer: quickInput.payer, 
                         status: 'active', 
                         timestamp: Date.now()
@@ -216,10 +199,9 @@
             };
 
             const handleBatchAdd = async () => {
-                if (!batchText.trim() || !currentBookId || !window.FB_UTILS) return;
-                const fb = window.FB_UTILS;
+                if (!batchText.trim() || !user || !currentBookId) return;
                 const lines = batchText.split('\n');
-                const batch = fb.writeBatch(fb.db);
+                const batch = db.batch();
                 let count = 0;
                 lines.forEach(line => {
                     const parts = line.trim().split(/[ \t,，]+/);
@@ -229,14 +211,14 @@
                         if (!isNaN(rawAmount)) {
                             let currency = isForeignMode ? currencyName : 'TWD';
                             let finalAmount = isForeignMode ? rawAmount * exchangeRate : rawAmount;
-                            const docRef = fb.doc(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses'));
+                            const docRef = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses').doc();
                             batch.set(docRef, { name, rawAmount: isForeignMode ? rawAmount : null, currency, amount: finalAmount, payer: quickInput.payer, status: 'active', timestamp: Date.now() + count });
                             count++;
                         }
                     }
                 });
                 if (count > 0) { 
-                    try { await batch.commit(); setBatchText(''); setInputMode('single'); } catch (e) { setErrorMessage("導入失敗"); }
+                    try { await batch.commit(); setBatchText(''); setInputMode('single'); } catch (e) { setErrorMessage("批量導入失敗"); }
                 }
             };
 
@@ -252,8 +234,7 @@
             };
 
             const handleSettlement = async () => {
-                if (items.length === 0 || !currentBookId || !window.FB_UTILS) return;
-                const fb = window.FB_UTILS;
+                if (items.length === 0 || !user || !currentBookId) return;
                 setIsSettling(true);
                 const stats = calculateBalances();
                 const settlementData = { 
@@ -261,10 +242,11 @@
                     bookName: books.find(b => b.id === currentBookId)?.name || '未命名帳本'
                 };
                 try {
-                    await fb.addDoc(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'settlements'), settlementData);
-                    const batch = fb.writeBatch(fb.db);
+                    await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('settlements').add(settlementData);
+                    const batch = db.batch();
                     items.forEach(item => { 
-                        batch.update(fb.doc(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses', item.id), { status: 'settled' }); 
+                        const ref = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses').doc(item.id);
+                        batch.update(ref, { status: 'settled' }); 
                     });
                     await batch.commit();
                     setLastSettlementData(settlementData);
@@ -278,14 +260,14 @@
 
             return (
                 <div className="min-h-screen flex flex-col items-center pb-20">
-                    {/* 錯誤提示 */}
+                    {/* Error Toast */}
                     {errorMessage && (
                         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[200] bg-red-500 text-white px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 font-bold animate-bounce">
                             <Icon name="AlertCircle" size={18} /> {errorMessage}
                         </div>
                     )}
 
-                    {/* UID 同步 */}
+                    {/* UID Modal */}
                     {showUidModal && (
                         <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                             <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl space-y-6">
@@ -303,7 +285,7 @@
                         </div>
                     )}
 
-                    {/* 收據 Modal */}
+                    {/* Receipt Modal */}
                     {showReceipt && lastSettlementData && (
                         <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
                             <div className="w-full max-w-sm flex flex-col gap-4 my-8">
@@ -355,12 +337,12 @@
                                     <button onClick={() => setView('history')} className={`px-4 py-1.5 text-xs font-bold rounded-lg ${view === 'history' ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={view === 'history' ? { color: themeColor.primary } : {}}>歷史</button>
                                 </div>
                                 <button onClick={() => setShowUidModal(true)} className="p-2 text-slate-400 hover:text-slate-600"><Icon name="RefreshCw" size={18}/></button>
-                                <button onClick={() => window.FB_UTILS?.signOut(window.FB_UTILS.auth).then(() => window.location.reload())} className="p-2 text-slate-400 hover:text-red-400"><Icon name="LogOut" size={18}/></button>
+                                <button onClick={handleSignOut} className="p-2 text-slate-400 hover:text-red-400"><Icon name="LogOut" size={18}/></button>
                             </div>
                         </div>
                     </header>
 
-                    {/* Main */}
+                    {/* Main Content */}
                     <main className="w-full p-4 md:p-8 space-y-6 max-w-6xl">
                         {view === 'books' ? (
                             <div className="space-y-4">
@@ -389,7 +371,7 @@
                         ) : view === 'active' ? (
                             <div className="grid md:grid-cols-2 gap-8">
                                 <div className="space-y-6">
-                                    {/* 參與成員 */}
+                                    {/* Participants */}
                                     <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-5">
                                         <div className="flex justify-between items-center">
                                             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">參與成員</h3>
@@ -432,7 +414,7 @@
                                         </div>
                                     </div>
 
-                                    {/* 輸入表單 */}
+                                    {/* Input Form */}
                                     <div className="bg-white p-8 rounded-[2rem] shadow-sm border space-y-6">
                                         <div className="flex bg-slate-50 p-1 rounded-2xl">
                                             <button onClick={() => setInputMode('single')} className={`flex-1 py-2 text-xs font-black rounded-xl ${inputMode === 'single' ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={inputMode === 'single' ? { color: themeColor.primary } : {}}>單筆輸入</button>
@@ -461,12 +443,12 @@
                                     {items.length > 0 && (
                                         <button onClick={handleSettlement} disabled={isSettling} className="w-full text-white font-black py-5 rounded-[2rem] shadow-xl flex items-center justify-center gap-3 active:scale-95 transition-all" style={{ backgroundColor: themeColor.primary }}>
                                             {isSettling ? <Icon name="Loader2" className="animate-spin" /> : <Icon name="CheckCircle2" size={24} />} 
-                                            {isSettling ? '結算中...' : '結算並產出收據'}
+                                            {isSettling ? '處理中...' : '結算並產出收據'}
                                         </button>
                                     )}
                                 </div>
 
-                                {/* 右側統計 */}
+                                {/* Right Side - Summary */}
                                 <div className="space-y-6">
                                     <div className="bg-[#40514E] rounded-[2.5rem] shadow-2xl overflow-hidden text-white border border-white/5">
                                         <div className="p-10">
@@ -490,7 +472,7 @@
                                                 {items.length === 0 ? (
                                                     <p className="text-center py-10 text-slate-300 text-xs font-bold">尚無支出紀錄</p>
                                                 ) : items.map(item => (
-                                                    <div key={item.id} className="flex justify-between items-center group">
+                                                    <div key={item.id} className="flex justify-between items-center">
                                                         <div className="flex items-center gap-3">
                                                             <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-[10px]" style={{ backgroundColor: `${themeColor.primary}1A`, color: themeColor.primary }}>{item.payer[0]}</div>
                                                             <p className="text-sm font-black text-[#40514E] truncate w-24">{item.name}</p>
@@ -498,9 +480,7 @@
                                                         <div className="flex items-center gap-4">
                                                             <p className="font-black text-[#40514E] text-sm">${item.amount.toLocaleString()}</p>
                                                             <button onClick={async () => {
-                                                                if (!window.FB_UTILS) return;
-                                                                const fb = window.FB_UTILS;
-                                                                await fb.deleteDoc(fb.doc(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses', item.id));
+                                                                await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses').doc(item.id).delete();
                                                             }} className="text-slate-200 hover:text-red-400"><Icon name="Trash2" size={16} /></button>
                                                         </div>
                                                     </div>
@@ -515,7 +495,7 @@
                                 <h2 className="text-xl font-black flex items-center gap-2"><Icon name="Archive" size={24} style={{ color: themeColor.primary }} /> 歷史結算</h2>
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                     {settlements.map(s => (
-                                        <div key={s.id} onClick={() => { setLastSettlementData(s); setShowReceipt(true); }} className="bg-white rounded-[2.5rem] shadow-sm border p-8 cursor-pointer hover:shadow-md transition-shadow">
+                                        <div key={s.id} onClick={() => { setLastSettlementData(s); setShowReceipt(true); }} className="bg-white rounded-[2.5rem] shadow-sm border p-8 cursor-pointer">
                                             <p className="text-xs font-black text-slate-400 mb-2">{new Date(s.settledAt).toLocaleDateString()}</p>
                                             <h3 className="text-lg font-black text-[#40514E] mb-4">{s.bookName}</h3>
                                             <p className="text-2xl font-black" style={{ color: themeColor.primary }}>${s.totalSpent?.toLocaleString()}</p>
@@ -529,11 +509,8 @@
             );
         }
 
-        // 確保 DOM 載入後再渲染
-        window.addEventListener('load', () => {
-            const root = ReactDOM.createRoot(document.getElementById('root'));
-            root.render(<App />);
-        });
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
     </script>
 </body>
 </html>
