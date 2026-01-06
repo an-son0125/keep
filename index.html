@@ -4,15 +4,33 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>好友拆帳助手 - 雲端同步版</title>
+    <!-- 預先加載 Lucide 圖標庫 -->
+    <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #F5F5F5; color: #576F72; margin: 0; padding: 0; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .receipt-shadow { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); }
+        #root { min-height: 100vh; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- React & Babel -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signOut, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, getDocs, addDoc, query, onSnapshot, deleteDoc, writeBatch, updateDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
-        // 使用者提供的 Firebase 配置
         const firebaseConfig = {
             apiKey: "AIzaSyCf3gdvdTMm5BFXjho7_xdQjE0eH4JSAzM",
             authDomain: "keep-40f68.firebaseapp.com",
@@ -28,38 +46,18 @@
         const db = getFirestore(app);
         const APP_ID = 'expense-splitter-v2';
 
-        window.FB_UTILS = { auth, db, APP_ID, collection, doc, setDoc, getDocs, addDoc, query, onSnapshot, deleteDoc, writeBatch, updateDoc, signOut };
+        // 將 Firebase 功能掛載到全域供 React 使用
+        window.FB_UTILS = { auth, db, APP_ID, collection, doc, setDoc, getDocs, addDoc, query, onSnapshot, deleteDoc, writeBatch, updateDoc, signOut, signInAnonymously };
     </script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
-        body { font-family: 'Noto Sans TC', sans-serif; background-color: #F5F5F5; color: #576F72; }
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-        .receipt-shadow { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
 
-    <!-- React & Babel -->
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
     <script type="babel">
         const { useState, useEffect, useRef, useMemo } = React;
-        const { 
-            Plus, Trash2, Download, History, Calculator, 
-            ListPlus, CheckCircle2, ChevronRight, Archive, 
-            Globe, Coins, FolderKanban, CreditCard, Banknote,
-            Users, UserPlus, X, Stamp, Keyboard, Palette, Settings2, 
-            Layout, LayoutGrid, Monitor, Smartphone, Camera, Share2,
-            AlertCircle, Loader2, LogOut, RefreshCw, ChevronUp, ChevronDown
-        } = window.lucide;
 
-        // 引入 Lucide 圖標 (透過 CDN 注入)
-        const Icon = ({ name, ...props }) => {
-            const LucideIcon = window.lucide[name];
-            return LucideIcon ? <LucideIcon {...props} /> : null;
+        // 圖標元件修復版：確保 lucide 存在
+        const Icon = ({ name, size = 18, className = "", ...props }) => {
+            const LucideIcon = window.lucide ? window.lucide[name] : null;
+            if (!LucideIcon) return <span className="w-4 h-4 bg-slate-200 rounded-sm inline-block"></span>;
+            return <LucideIcon size={size} className={className} {...props} />;
         };
 
         const colorPalettes = [
@@ -101,47 +99,60 @@
             const [lastSettlementData, setLastSettlementData] = useState(null);
             const receiptRef = useRef(null);
 
-            const { auth, db, APP_ID, collection, doc, setDoc, getDocs, addDoc, query, onSnapshot, deleteDoc, writeBatch, updateDoc, signOut } = window.FB_UTILS;
+            // 確保 Firebase Utils 加載
+            const getFB = () => window.FB_UTILS;
 
-            // Auth 初始化
+            // Auth 初始化與同步功能
             useEffect(() => {
-                const unsubscribe = onAuthStateChanged(auth, (u) => {
-                    if (u) {
-                        setUser(u);
-                        setUidInput(u.uid);
-                    } else {
-                        signInAnonymously(auth);
+                const checkFB = setInterval(() => {
+                    const fb = getFB();
+                    if (fb) {
+                        clearInterval(checkFB);
+                        const unsubscribe = fb.onAuthStateChanged(fb.auth, (u) => {
+                            if (u) {
+                                setUser(u);
+                                setUidInput(u.uid);
+                            } else {
+                                fb.signInAnonymously(fb.auth);
+                            }
+                            setLoading(false);
+                        });
+                        return () => unsubscribe();
                     }
-                    setLoading(false);
-                });
-                return () => unsubscribe();
+                }, 100);
+                return () => clearInterval(checkFB);
             }, []);
 
             // 監聽帳本清單
             useEffect(() => {
-                if (!user) return;
-                const q = collection(db, 'artifacts', APP_ID, 'users', user.uid, 'books');
-                return onSnapshot(q, (snapshot) => {
+                const fb = getFB();
+                if (!user || !fb) return;
+                const q = fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books');
+                return fb.onSnapshot(q, (snapshot) => {
                     const booksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setBooks(booksData);
                     if (!currentBookId && booksData.length > 0) setCurrentBookId(booksData[0].id);
-                }, (err) => setErrorMessage("載入帳本失敗"));
-            }, [user]);
+                });
+            }, [user, currentBookId]);
 
             // 監聽當前帳本資料
             useEffect(() => {
-                if (!user || !currentBookId) return;
+                const fb = getFB();
+                if (!user || !currentBookId || !fb) return;
+                
                 const currentBook = books.find(b => b.id === currentBookId);
-                if (currentBook) setParticipants(currentBook.participants || ['我', '朋友']);
+                if (currentBook && currentBook.participants) setParticipants(currentBook.participants);
 
-                const qExpenses = collection(db, 'artifacts', APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses');
-                const unsubExp = onSnapshot(qExpenses, (snapshot) => {
+                const qExpenses = fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses');
+                const unsubExp = fb.onSnapshot(qExpenses, (snapshot) => {
                     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setItems(data.filter(i => i.status !== 'settled').sort((a, b) => b.timestamp - a.timestamp));
                 });
 
-                const qSettlements = collection(db, 'artifacts', APP_ID, 'users', user.uid, 'books', currentBookId, 'settlements');
-                const unsubSet = onSnapshot(qSettlements, (snapshot) => {
+                const qSettlements = fb.collection(fb.db, fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'settlements');
+                // 修正路徑錯誤
+                const qSettlementsCorrect = fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'settlements');
+                const unsubSet = fb.onSnapshot(qSettlementsCorrect, (snapshot) => {
                     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setSettlements(data.sort((a, b) => b.settledAt - a.settledAt));
                 });
@@ -150,72 +161,73 @@
             }, [user, currentBookId, books]);
 
             const handleSignOut = async () => {
-                await signOut(auth);
+                const fb = getFB();
+                await fb.signOut(fb.auth);
                 window.location.reload();
             };
 
             const handleAddBook = async () => {
-                if (!newBookName.trim() || !user) return;
+                const fb = getFB();
+                if (!newBookName.trim() || !user || !fb) return;
                 try {
-                    const docRef = await addDoc(collection(db, 'artifacts', APP_ID, 'users', user.uid, 'books'), {
+                    const docRef = await fb.addDoc(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books'), {
                         name: newBookName, participants: ['我', '朋友'], createdAt: Date.now()
                     });
                     setNewBookName('');
                     setIsAddingBook(false);
                     setCurrentBookId(docRef.id);
                     setView('active');
-                } catch (e) { setErrorMessage("新增帳本失敗，請稍後再試。"); }
+                } catch (e) { setErrorMessage("新增帳本失敗"); }
             };
 
             const updateParticipants = async (newParticipants) => {
-                if (!user || !currentBookId) return;
+                const fb = getFB();
+                if (!user || !currentBookId || !fb) return;
                 setParticipants(newParticipants);
                 try {
-                    await updateDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'books', currentBookId), { participants: newParticipants });
+                    await fb.updateDoc(fb.doc(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId), { participants: newParticipants });
                 } catch (e) { setErrorMessage("更新成員失敗"); }
             };
 
             const handleQuickAdd = async () => {
-                if (!quickInput.name || !quickInput.amount) { setErrorMessage("請輸入品項名稱與金額"); return; }
-                if (!user || !currentBookId) { setErrorMessage("帳本未就緒，請重試"); return; }
+                const fb = getFB();
+                if (!quickInput.name || !quickInput.amount) { setErrorMessage("請輸入內容"); return; }
+                if (!user || !currentBookId || !fb) { setErrorMessage("請先選擇帳本"); return; }
 
                 const amount = parseFloat(quickInput.amount);
-                if (isNaN(amount)) { setErrorMessage("金額無效"); return; }
-
                 const isForeign = quickInput.currency !== 'TWD';
                 const finalAmountInTWD = isForeign ? amount * exchangeRate : amount;
-                const newItem = {
-                    name: quickInput.name, 
-                    rawAmount: isForeign ? amount : null, 
-                    currency: isForeign ? quickInput.currency : 'TWD',
-                    amount: finalAmountInTWD, 
-                    payer: quickInput.payer, 
-                    status: 'active', 
-                    timestamp: Date.now()
-                };
+                
                 try {
-                    await addDoc(collection(db, 'artifacts', APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses'), newItem);
+                    await fb.addDoc(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses'), {
+                        name: quickInput.name, 
+                        rawAmount: isForeign ? amount : null, 
+                        currency: isForeign ? quickInput.currency : 'TWD',
+                        amount: finalAmountInTWD, 
+                        payer: quickInput.payer, 
+                        status: 'active', 
+                        timestamp: Date.now()
+                    });
                     setQuickInput(prev => ({ ...prev, name: '', amount: '' }));
                 } catch (e) { setErrorMessage("新增失敗"); }
             };
 
             const handleBatchAdd = async () => {
-                if (!batchText.trim() || !user || !currentBookId) return;
+                const fb = getFB();
+                if (!batchText.trim() || !user || !currentBookId || !fb) return;
                 const lines = batchText.split('\n');
-                const batch = writeBatch(db);
+                const batch = fb.writeBatch(fb.db);
                 let count = 0;
                 lines.forEach(line => {
                     const parts = line.trim().split(/[ \t,，]+/);
                     if (parts.length >= 2) {
                         const name = parts[0];
                         const rawAmount = parseFloat(parts[1]);
-                        let currency = isForeignMode ? currencyName : 'TWD';
-                        if (parts[2]) currency = parts[2].toUpperCase();
                         if (!isNaN(rawAmount)) {
-                            let finalAmount = rawAmount;
-                            if (currency !== 'TWD') finalAmount = rawAmount * exchangeRate;
-                            const docRef = doc(collection(db, 'artifacts', APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses'));
-                            batch.set(docRef, { name, rawAmount: currency !== 'TWD' ? rawAmount : null, currency, amount: finalAmount, payer: quickInput.payer, status: 'active', timestamp: Date.now() + count });
+                            let currency = isForeignMode ? currencyName : 'TWD';
+                            let finalAmount = isForeignMode ? rawAmount * exchangeRate : rawAmount;
+                            const docRef = fb.doc(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses'));
+                            batch.set(docRef, { name, rawAmount: isForeignMode ? rawAmount : null, currency, amount: finalAmount, payer: quickInput.payer, status: 'active', timestamp: Date.now() + count });
                             count++;
                         }
                     }
@@ -237,7 +249,8 @@
             };
 
             const handleSettlement = async () => {
-                if (items.length === 0 || !user || !currentBookId) return;
+                const fb = getFB();
+                if (items.length === 0 || !user || !currentBookId || !fb) return;
                 setIsSettling(true);
                 const stats = calculateBalances();
                 const settlementData = { 
@@ -245,10 +258,10 @@
                     bookName: books.find(b => b.id === currentBookId)?.name || '未命名帳本'
                 };
                 try {
-                    await addDoc(collection(db, 'artifacts', APP_ID, 'users', user.uid, 'books', currentBookId, 'settlements'), settlementData);
-                    const batch = writeBatch(db);
+                    await fb.addDoc(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'settlements'), settlementData);
+                    const batch = fb.writeBatch(fb.db);
                     items.forEach(item => { 
-                        batch.update(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses', item.id), { status: 'settled' }); 
+                        batch.update(fb.doc(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses', item.id), { status: 'settled' }); 
                     });
                     await batch.commit();
                     setLastSettlementData(settlementData);
@@ -256,25 +269,16 @@
                 } catch (e) { setErrorMessage("結算錯誤"); } finally { setIsSettling(false); }
             };
 
-            const saveReceiptAsImage = async () => {
-                if (!receiptRef.current) return;
-                const canvas = await html2canvas(receiptRef.current, { backgroundColor: '#FFFFFF', scale: 2 });
-                const link = document.createElement('a');
-                link.download = `結算單_${Date.now()}.png`;
-                link.href = canvas.toDataURL('image/png');
-                link.click();
-            };
-
             const { totalSpent, average, balances } = calculateBalances();
 
-            if (loading) return <div className="h-screen flex items-center justify-center bg-white"><Loader2 className="animate-spin text-slate-300" size={32} /></div>;
+            if (loading) return <div className="h-screen flex items-center justify-center bg-white"><Icon name="Loader2" className="animate-spin text-slate-300" size={32} /></div>;
 
             return (
                 <div className="min-h-screen flex flex-col items-center pb-20">
                     {/* Error Toast */}
                     {errorMessage && (
                         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[200] bg-red-500 text-white px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 font-bold animate-bounce">
-                            <AlertCircle size={18} /> {errorMessage}
+                            <Icon name="AlertCircle" size={18} /> {errorMessage}
                         </div>
                     )}
 
@@ -282,14 +286,14 @@
                     {showUidModal && (
                         <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                             <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl space-y-6">
-                                <h3 className="text-xl font-black flex items-center gap-2"><RefreshCw size={22} /> 雲端帳號同步</h3>
-                                <p className="text-sm text-slate-400 font-medium">在下方輸入或貼上您的專屬 UID，即可在不同裝置間同步您的所有帳本與紀錄。</p>
+                                <h3 className="text-xl font-black flex items-center gap-2"><Icon name="RefreshCw" size={22} /> 雲端帳號同步</h3>
+                                <p className="text-sm text-slate-400 font-medium">在下方輸入您的專屬 UID，即可載入您的資料。</p>
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black uppercase tracking-widest text-slate-300 ml-1">您的專屬 UID</label>
                                     <input value={uidInput} onChange={(e) => setUidInput(e.target.value)} className="w-full bg-[#F1F1F1] p-4 rounded-2xl text-xs font-mono border-none focus:ring-2" style={{ ringColor: themeColor.primary }} />
                                 </div>
                                 <div className="flex gap-3">
-                                    <button onClick={() => { navigator.clipboard.writeText(uidInput); setErrorMessage("已複製到剪貼簿"); }} className="flex-1 bg-slate-100 py-4 rounded-2xl text-xs font-black">複製</button>
+                                    <button onClick={() => { navigator.clipboard.writeText(uidInput); setErrorMessage("已複製"); }} className="flex-1 bg-slate-100 py-4 rounded-2xl text-xs font-black">複製 UID</button>
                                     <button onClick={() => setShowUidModal(false)} className="flex-1 bg-slate-800 text-white py-4 rounded-2xl text-xs font-black">關閉</button>
                                 </div>
                             </div>
@@ -319,8 +323,14 @@
                                     </div>
                                 </div>
                                 <div className="flex gap-2">
-                                    <button onClick={saveReceiptAsImage} className="flex-1 bg-white text-[#40514E] py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2"><Camera size={18} /> 儲存圖片</button>
-                                    <button onClick={() => setShowReceipt(false)} className="bg-white/20 text-white w-14 rounded-2xl flex items-center justify-center"><X size={20} /></button>
+                                    <button onClick={async () => {
+                                        const canvas = await html2canvas(receiptRef.current);
+                                        const link = document.createElement('a');
+                                        link.download = 'settlement.png';
+                                        link.href = canvas.toDataURL();
+                                        link.click();
+                                    }} className="flex-1 bg-white text-[#40514E] py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2"><Icon name="Camera" size={18} /> 儲存圖片</button>
+                                    <button onClick={() => setShowReceipt(false)} className="bg-white/20 text-white w-14 rounded-2xl flex items-center justify-center"><Icon name="X" size={20} /></button>
                                 </div>
                             </div>
                         </div>
@@ -330,10 +340,10 @@
                     <header className="w-full bg-white border-b sticky top-0 z-50 px-4 py-4 shadow-sm flex justify-center">
                         <div className="w-full max-w-5xl flex justify-between items-center">
                             <div className="flex items-center gap-3">
-                                <FolderKanban style={{ color: themeColor.primary }} size={22} />
+                                <Icon name="FolderKanban" style={{ color: themeColor.primary }} size={22} />
                                 <button onClick={() => setView('books')} className="text-sm font-black hover:bg-slate-50 px-2 py-1 rounded-md">
-                                    {books.find(b => b.id === currentBookId)?.name || '請選擇帳本'}
-                                    <ChevronRight size={14} className="inline ml-1 opacity-50" />
+                                    {books.find(b => b.id === currentBookId)?.name || '切換帳本'}
+                                    <Icon name="ChevronRight" size={14} className="inline ml-1 opacity-50" />
                                 </button>
                             </div>
                             <div className="flex items-center gap-2">
@@ -341,19 +351,19 @@
                                     <button onClick={() => setView('active')} className={`px-4 py-1.5 text-xs font-bold rounded-lg ${view === 'active' ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={view === 'active' ? { color: themeColor.primary } : {}}>現行</button>
                                     <button onClick={() => setView('history')} className={`px-4 py-1.5 text-xs font-bold rounded-lg ${view === 'history' ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={view === 'history' ? { color: themeColor.primary } : {}}>歷史</button>
                                 </div>
-                                <button onClick={() => setShowUidModal(true)} className="p-2 text-slate-400 hover:text-slate-600"><RefreshCw size={18}/></button>
-                                <button onClick={handleSignOut} className="p-2 text-slate-400 hover:text-red-400"><LogOut size={18}/></button>
+                                <button onClick={() => setShowUidModal(true)} className="p-2 text-slate-400 hover:text-slate-600"><Icon name="RefreshCw" size={18}/></button>
+                                <button onClick={handleSignOut} className="p-2 text-slate-400 hover:text-red-400"><Icon name="LogOut" size={18}/></button>
                             </div>
                         </div>
                     </header>
 
                     {/* Main Content */}
-                    <main className={`w-full p-4 md:p-8 space-y-6 max-w-6xl`}>
+                    <main className="w-full p-4 md:p-8 space-y-6 max-w-6xl">
                         {view === 'books' ? (
                             <div className="space-y-4">
                                 <div className="flex justify-between items-center px-1">
-                                    <h2 className="font-black text-lg">我的帳本庫</h2>
-                                    <button onClick={() => setIsAddingBook(true)} style={{ backgroundColor: themeColor.primary }} className="text-white p-2 rounded-full"><Plus size={20} /></button>
+                                    <h2 className="font-black text-lg">帳本列表</h2>
+                                    <button onClick={() => setIsAddingBook(true)} style={{ backgroundColor: themeColor.primary }} className="text-white p-2 rounded-full"><Icon name="Plus" size={20} /></button>
                                 </div>
                                 {isAddingBook && (
                                     <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-4">
@@ -368,7 +378,7 @@
                                     {books.map(book => (
                                         <button key={book.id} onClick={() => { setCurrentBookId(book.id); setView('active'); }} className={`p-6 rounded-3xl text-left border transition-all bg-white ${currentBookId === book.id ? 'border-2' : 'shadow-sm'}`} style={currentBookId === book.id ? { borderColor: themeColor.primary } : {}}>
                                             <span className="font-black text-lg block">{book.name}</span>
-                                            <span className="text-[10px] text-slate-400 font-bold uppercase mt-2 block"><Users size={12} className="inline mr-1"/> {book.participants?.length || 0} 位成員</span>
+                                            <span className="text-[10px] text-slate-400 font-bold uppercase mt-2 block"><Icon name="Users" size={12} className="inline mr-1"/> {book.participants?.length || 0} 位成員</span>
                                         </button>
                                     ))}
                                 </div>
@@ -376,33 +386,31 @@
                         ) : view === 'active' ? (
                             <div className="grid md:grid-cols-2 gap-8">
                                 <div className="space-y-6">
-                                    {/* 參與成員 - 新增縮放功能 */}
+                                    {/* 參與成員 */}
                                     <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-5">
                                         <div className="flex justify-between items-center">
                                             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">參與成員</h3>
                                             <div className="flex gap-3">
                                                 <button onClick={() => setIsParticipantsExpanded(!isParticipantsExpanded)} className="text-slate-300 hover:text-slate-500">
-                                                    {isParticipantsExpanded ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
+                                                    <Icon name={isParticipantsExpanded ? "ChevronUp" : "ChevronDown"} size={18}/>
                                                 </button>
-                                                <button onClick={() => setShowPalette(!showPalette)} style={{ color: showPalette ? themeColor.primary : '#CBD5E1' }}><Settings2 size={16} /></button>
+                                                <button onClick={() => setShowPalette(!showPalette)} style={{ color: showPalette ? themeColor.primary : '#CBD5E1' }}><Icon name="Settings2" size={16} /></button>
                                             </div>
                                         </div>
                                         
-                                        {isParticipantsExpanded && (
-                                            <div className="flex flex-wrap gap-2 animate-in fade-in slide-in-from-top-2">
+                                        {isParticipantsExpanded ? (
+                                            <div className="flex flex-wrap gap-2">
                                                 {participants.map((p, idx) => (
                                                     <div key={idx} className="group relative">
                                                         <input value={p} onChange={(e) => { const nl = [...participants]; nl[idx] = e.target.value; updateParticipants(nl); }} className="bg-[#F1F1F1] px-4 py-2 rounded-2xl text-xs font-bold border-none w-24 text-center" />
-                                                        {participants.length > 2 && <button onClick={() => updateParticipants(participants.filter((_, i) => i !== idx))} style={{ backgroundColor: themeColor.secondary }} className="absolute -top-1 -right-1 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100"><X size={10} /></button>}
+                                                        {participants.length > 2 && <button onClick={() => updateParticipants(participants.filter((_, i) => i !== idx))} style={{ backgroundColor: themeColor.secondary }} className="absolute -top-1 -right-1 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100"><Icon name="X" size={10} /></button>}
                                                     </div>
                                                 ))}
-                                                <button onClick={() => updateParticipants([...participants, `成員${participants.length + 1}`])} className="px-4 py-2 border-2 border-dashed border-slate-200 rounded-2xl text-slate-300"><UserPlus size={16} /></button>
+                                                <button onClick={() => updateParticipants([...participants, `成員${participants.length + 1}`])} className="px-4 py-2 border-2 border-dashed border-slate-200 rounded-2xl text-slate-300"><Icon name="UserPlus" size={16} /></button>
                                             </div>
-                                        )}
-                                        
-                                        {!isParticipantsExpanded && (
-                                            <div className="text-[10px] font-bold text-slate-300 bg-slate-50 px-3 py-1 rounded-lg inline-block">
-                                                {participants.join(', ')}
+                                        ) : (
+                                            <div className="text-[10px] font-bold text-slate-400 bg-slate-50 px-3 py-2 rounded-xl">
+                                                {participants.join('、')}
                                             </div>
                                         )}
 
@@ -411,11 +419,11 @@
                                         )}
 
                                         <div className="pt-4 border-t flex items-center justify-between">
-                                            <button onClick={() => setIsForeignMode(!isForeignMode)} className={`text-[10px] font-black px-4 py-2 rounded-full bg-slate-100 ${isForeignMode ? '' : 'text-slate-400'}`} style={isForeignMode ? { color: themeColor.primary } : {}}><Globe size={12} className="inline mr-1" /> {isForeignMode ? `${currencyName} 開啟` : '外幣關閉'}</button>
+                                            <button onClick={() => setIsForeignMode(!isForeignMode)} className={`text-[10px] font-black px-4 py-2 rounded-full bg-slate-100 ${isForeignMode ? '' : 'text-slate-400'}`} style={isForeignMode ? { color: themeColor.primary } : {}}><Icon name="Globe" size={12} className="inline mr-1" /> 外幣模式</button>
                                             {isForeignMode && (
                                                 <div className="flex gap-2">
                                                     <input value={currencyName} onChange={(e) => setCurrencyName(e.target.value.toUpperCase())} className="w-12 bg-slate-50 p-2 rounded-xl text-[10px] font-bold text-center border-none" />
-                                                    <input type="number" step="0.0001" value={exchangeRate} onChange={(e) => setExchangeRate(parseFloat(e.target.value) || 0)} className="w-16 bg-[#F1F1F1] p-2 rounded-xl text-[10px] font-bold text-center border-none" style={{ color: themeColor.primary }} />
+                                                    <input type="number" step="0.01" value={exchangeRate} onChange={(e) => setExchangeRate(parseFloat(e.target.value) || 0)} className="w-16 bg-[#F1F1F1] p-2 rounded-xl text-[10px] font-bold text-center border-none" style={{ color: themeColor.primary }} />
                                                 </div>
                                             )}
                                         </div>
@@ -434,38 +442,38 @@
                                                 <select value={quickInput.currency} onChange={(e) => setQuickInput({...quickInput, currency: e.target.value})} className="col-span-4 bg-[#F1F1F1] p-4 rounded-2xl text-xs font-black border-none"><option value="TWD">TWD</option><option value={currencyName}>{currencyName}</option></select>
                                             </div>
                                         ) : (
-                                            <textarea placeholder="例如：拉麵 1500&#10;便利商店 500" rows={4} value={batchText} onChange={(e) => setBatchText(e.target.value)} className="w-full bg-[#F1F1F1] p-5 rounded-2xl text-sm font-bold border-none resize-none" />
+                                            <textarea placeholder="例如：早餐 150" rows={4} value={batchText} onChange={(e) => setBatchText(e.target.value)} className="w-full bg-[#F1F1F1] p-5 rounded-2xl text-sm font-bold border-none resize-none" />
                                         )}
                                         <div className="space-y-3">
-                                            <span className="text-[9px] font-black text-slate-300 uppercase ml-1">付款人</span>
+                                            <span className="text-[9px] font-black text-slate-300 uppercase ml-1">誰付錢的？</span>
                                             <div className="flex flex-wrap gap-2">
                                                 {participants.map((p, idx) => (
                                                     <button key={idx} onClick={() => setQuickInput({...quickInput, payer: p})} className={`px-4 py-2 rounded-2xl text-xs font-bold border-2 ${quickInput.payer === p ? 'text-white' : 'bg-white text-slate-400 border-slate-100'}`} style={quickInput.payer === p ? { backgroundColor: themeColor.primary, borderColor: themeColor.primary } : {}}>{p}</button>
                                                 ))}
                                             </div>
                                         </div>
-                                        <button onClick={inputMode === 'single' ? handleQuickAdd : handleBatchAdd} className="w-full text-white py-4 rounded-2xl font-black text-sm active:scale-95 shadow-lg bg-[#40514E]">新增支出</button>
+                                        <button onClick={inputMode === 'single' ? handleQuickAdd : handleBatchAdd} className="w-full text-white py-4 rounded-2xl font-black text-sm active:scale-95 shadow-lg bg-[#40514E]">確認新增</button>
                                     </div>
 
                                     {items.length > 0 && (
                                         <button onClick={handleSettlement} disabled={isSettling} className="w-full text-white font-black py-5 rounded-[2rem] shadow-xl flex items-center justify-center gap-3 active:scale-95 transition-all" style={{ backgroundColor: themeColor.primary }}>
-                                            {isSettling ? <Loader2 className="animate-spin" /> : <CheckCircle2 size={24} />} 
-                                            {isSettling ? '正在結算...' : '結算並產生收據'}
+                                            {isSettling ? <Icon name="Loader2" className="animate-spin" /> : <Icon name="CheckCircle2" size={24} />} 
+                                            {isSettling ? '處理中...' : '結算並產出收據'}
                                         </button>
                                     )}
                                 </div>
 
-                                {/* Right Side: Summary & List */}
+                                {/* Right Side */}
                                 <div className="space-y-6">
                                     <div className="bg-[#40514E] rounded-[2.5rem] shadow-2xl overflow-hidden text-white border border-white/5">
                                         <div className="p-10">
-                                            <p style={{ color: themeColor.primary }} className="text-[10px] font-black uppercase tracking-[0.2em] mb-2">支出摘要</p>
+                                            <p style={{ color: themeColor.primary }} className="text-[10px] font-black uppercase tracking-[0.2em] mb-2">本次總支出</p>
                                             <h2 className="text-4xl font-black mb-1">${totalSpent.toLocaleString(undefined, {maximumFractionDigits: 1})}</h2>
                                             <div className="mt-8 space-y-3">
                                                 {participants.map(p => {
                                                     const bal = balances[p] || 0;
                                                     return (
-                                                        <div key={p} className="flex justify-between items-center bg-white/5 p-4 rounded-2xl border border-white/5 backdrop-blur-sm">
+                                                        <div key={p} className="flex justify-between items-center bg-white/5 p-4 rounded-2xl border border-white/5">
                                                             <span className="font-bold text-sm">{p}</span>
                                                             <span className="font-black text-sm" style={{ color: bal >= 0 ? themeColor.primary : themeColor.secondary }}>{bal >= 0 ? '+' : '-'}${Math.abs(bal).toLocaleString(undefined, {maximumFractionDigits: 1})}</span>
                                                         </div>
@@ -474,9 +482,11 @@
                                             </div>
                                         </div>
                                         <div className="bg-white text-[#576F72] p-8 rounded-t-[2.5rem]">
-                                            <h4 className="text-xs font-black uppercase tracking-widest text-slate-300 mb-6">支出細目</h4>
+                                            <h4 className="text-xs font-black uppercase tracking-widest text-slate-300 mb-6">支出明細</h4>
                                             <div className="space-y-5 max-h-[400px] overflow-y-auto hide-scrollbar">
-                                                {items.map(item => (
+                                                {items.length === 0 ? (
+                                                    <p className="text-center py-10 text-slate-300 text-xs font-bold">尚無支出紀錄</p>
+                                                ) : items.map(item => (
                                                     <div key={item.id} className="flex justify-between items-center">
                                                         <div className="flex items-center gap-3">
                                                             <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-[10px]" style={{ backgroundColor: `${themeColor.primary}1A`, color: themeColor.primary }}>{item.payer[0]}</div>
@@ -484,7 +494,10 @@
                                                         </div>
                                                         <div className="flex items-center gap-4">
                                                             <p className="font-black text-[#40514E] text-sm">${item.amount.toLocaleString()}</p>
-                                                            <button onClick={async () => await deleteDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses', item.id))} className="text-slate-200 hover:text-red-400"><Trash2 size={16} /></button>
+                                                            <button onClick={async () => {
+                                                                const fb = getFB();
+                                                                await fb.deleteDoc(fb.doc(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'books', currentBookId, 'expenses', item.id));
+                                                            }} className="text-slate-200 hover:text-red-400"><Icon name="Trash2" size={16} /></button>
                                                         </div>
                                                     </div>
                                                 ))}
@@ -495,11 +508,11 @@
                             </div>
                         ) : (
                             <div className="space-y-8 animate-in fade-in">
-                                <h2 className="text-xl font-black flex items-center gap-2"><Archive size={24} style={{ color: themeColor.primary }} /> 歷史結算紀錄</h2>
+                                <h2 className="text-xl font-black flex items-center gap-2"><Icon name="Archive" size={24} style={{ color: themeColor.primary }} /> 歷史紀錄</h2>
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                     {settlements.map(s => (
-                                        <div key={s.id} onClick={() => { setLastSettlementData(s); setShowReceipt(true); }} className="bg-white rounded-[2.5rem] shadow-sm border p-8 cursor-pointer hover:shadow-md transition-shadow">
-                                            <p className="text-xs font-black text-slate-400 mb-2">{new Date(s.settledAt).toLocaleDateString()} {new Date(s.settledAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                                        <div key={s.id} onClick={() => { setLastSettlementData(s); setShowReceipt(true); }} className="bg-white rounded-[2.5rem] shadow-sm border p-8 cursor-pointer">
+                                            <p className="text-xs font-black text-slate-400 mb-2">{new Date(s.settledAt).toLocaleDateString()}</p>
                                             <h3 className="text-lg font-black text-[#40514E] mb-4">{s.bookName}</h3>
                                             <p className="text-2xl font-black" style={{ color: themeColor.primary }}>${s.totalSpent?.toLocaleString()}</p>
                                         </div>
@@ -514,10 +527,6 @@
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
-    </script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <script>
-        lucide.createIcons();
     </script>
 </body>
 </html>
