@@ -11,7 +11,7 @@
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- Firebase SDKs -->
+    <!-- Firebase SDKs (Compat Version for maximum stability) -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
@@ -82,115 +82,106 @@
     </div>
 
     <script>
-        // --- 全域變數 (由環境提供) ---
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'expense-splitter-v1';
-
         // --- 全域狀態 ---
         let state = {
             accountKey: localStorage.getItem('expense_account_key') || Math.random().toString(36).substr(2, 9),
             books: [],
             currentBookId: null,
-            view: 'active', 
+            view: 'active', // 'active', 'history', 'books'
             items: [],
             settlements: [],
             participants: ['我', '朋友'],
             theme: { primary: '#8E9775', secondary: '#E28E8E' },
             isAddingBook: false,
-            selectedPayer: '我',
-            user: null
+            selectedPayer: '我'
         };
 
-        // --- 初始化 Firebase ---
+        // --- Firebase 設定 ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyCf3gdvdTMm5BFXjho7_xdQjE0eH4JSAzM",
+            authDomain: "keep-40f68.firebaseapp.com",
+            projectId: "keep-40f68",
+            storageBucket: "keep-40f68.firebasestorage.app",
+            messagingSenderId: "419621970498",
+            appId: "1:419621970498:web:9370a95618f4f8170103db"
+        };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
-        const auth = firebase.auth();
+        const appId = 'expense-splitter-cloud-v1';
 
-        // --- 初始化應用 ---
+        // --- 初始化 ---
         window.onload = async () => {
             localStorage.setItem('expense_account_key', state.accountKey);
             document.getElementById('display-account-key').innerText = state.accountKey;
             
-            // 規則 3: 先認證再查詢
-            auth.onAuthStateChanged(user => {
-                if (user) {
-                    state.user = user;
-                    listenToBooks();
-                } else {
-                    auth.signInAnonymously();
-                }
-            });
+            // 匿名登入
+            await firebase.auth().signInAnonymously();
+            
+            // 開始監聽帳本列表
+            listenToBooks();
             render();
         };
 
         // --- 資料監聽 ---
-        let unsubscribeBooks = null;
-        let unsubscribeExpenses = null;
-        let unsubscribeSettlements = null;
+        let unsubscribeDetails = [];
 
         function listenToBooks() {
-            if (!state.user) return;
-            
-            // 規則 1: 嚴格的路徑結構
-            const booksRef = db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books');
-            
-            unsubscribeBooks = booksRef.onSnapshot(snapshot => {
-                state.books = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                
-                if (!state.currentBookId && state.books.length > 0) {
-                    state.currentBookId = state.books[0].id;
-                }
-                
-                if (state.currentBookId) {
-                    const book = state.books.find(b => b.id === state.currentBookId);
-                    if (book) {
-                        state.participants = book.participants || ['我', '朋友'];
-                        if (!state.participants.includes(state.selectedPayer)) {
-                            state.selectedPayer = state.participants[0];
-                        }
+            db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books')
+                .onSnapshot(snapshot => {
+                    state.books = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    
+                    // 如果沒有選中帳本且有資料，預設選第一個
+                    if (!state.currentBookId && state.books.length > 0) {
+                        state.currentBookId = state.books[0].id;
                     }
-                    listenToDetails();
-                }
-                render();
-            }, err => console.error("Books snapshot error:", err));
+                    
+                    if (state.currentBookId) {
+                        const book = state.books.find(b => b.id === state.currentBookId);
+                        if (book) {
+                            state.participants = book.participants || ['我', '朋友'];
+                            if (!state.participants.includes(state.selectedPayer)) state.selectedPayer = state.participants[0];
+                        }
+                        listenToDetails();
+                    }
+                    render();
+                });
         }
 
         function listenToDetails() {
-            if (!state.user || !state.currentBookId) return;
+            // 清除舊的監聽
+            unsubscribeDetails.forEach(unsub => unsub());
+            unsubscribeDetails = [];
 
-            if (unsubscribeExpenses) unsubscribeExpenses();
-            if (unsubscribeSettlements) unsubscribeSettlements();
+            if (!state.currentBookId) return;
 
-            const bookRef = db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId);
+            // 監聽現行支出
+            const unsubExp = db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId).collection('expenses')
+                .onSnapshot(snapshot => {
+                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    state.items = data.filter(i => i.status !== 'settled').sort((a, b) => b.timestamp - a.timestamp);
+                    render();
+                });
 
-            // 監聽支出
-            unsubscribeExpenses = bookRef.collection('expenses').onSnapshot(snapshot => {
-                const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                // 規則 2: 在記憶體中過濾和排序
-                state.items = data.filter(i => i.status !== 'settled').sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-                render();
-            }, err => console.error("Expenses snapshot error:", err));
+            // 監聽結算歷史
+            const unsubSet = db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId).collection('settlements')
+                .onSnapshot(snapshot => {
+                    state.settlements = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => b.settledAt - a.settledAt);
+                    render();
+                });
 
-            // 監聽結算
-            unsubscribeSettlements = bookRef.collection('settlements').onSnapshot(snapshot => {
-                state.settlements = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.settledAt || 0) - (a.settledAt || 0));
-                render();
-            }, err => console.error("Settlements snapshot error:", err));
+            unsubscribeDetails.push(unsubExp, unsubSet);
         }
 
         // --- 核心功能 ---
         async function handleAddBook() {
-            if (!state.user) return;
             const name = document.getElementById('new-book-name').value;
             if (!name.trim()) {
                 showToast("請輸入帳本名稱");
                 return;
             }
-
             try {
-                const booksRef = db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books');
-                const res = await booksRef.add({
-                    name: name.trim(),
+                const res = await db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').add({
+                    name: name,
                     participants: ['我', '朋友'],
                     createdAt: Date.now()
                 });
@@ -200,13 +191,11 @@
                 showToast("帳本建立成功");
                 render();
             } catch (e) {
-                console.error(e);
-                showToast("建立失敗，請確認權限");
+                showToast("建立失敗，請稍後再試");
             }
         }
 
         async function handleQuickAdd() {
-            if (!state.user || !state.currentBookId) return;
             const nameInput = document.getElementById('input-item-name');
             const amountInput = document.getElementById('input-item-amount');
             
@@ -214,11 +203,16 @@
                 showToast("請填寫品項與金額");
                 return;
             }
+            if (!state.currentBookId) {
+                showToast("請先選擇或建立帳本");
+                state.view = 'books';
+                render();
+                return;
+            }
 
             try {
-                const expensesRef = db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId).collection('expenses');
-                await expensesRef.add({
-                    name: nameInput.value.trim(),
+                await db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId).collection('expenses').add({
+                    name: nameInput.value,
                     amount: parseFloat(amountInput.value),
                     payer: state.selectedPayer,
                     status: 'active',
@@ -227,33 +221,32 @@
                 nameInput.value = '';
                 amountInput.value = '';
                 showToast("已新增支出");
+                // render() 會被 Snapshot 自動觸發
             } catch (e) {
                 showToast("新增失敗");
             }
         }
 
         async function handleSettlement() {
-            if (!state.user || state.items.length === 0) return;
+            if (state.items.length === 0) return;
             const stats = calculateBalances();
             const currentBook = state.books.find(b => b.id === state.currentBookId);
             
             const settlementData = {
-                items: JSON.parse(JSON.stringify(state.items)),
+                items: [...state.items],
                 ...stats,
                 settledAt: Date.now(),
                 bookName: currentBook?.name || '未命名帳本'
             };
 
             try {
-                const bookRef = db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId);
-                
                 // 1. 儲存結算紀錄
-                await bookRef.collection('settlements').add(settlementData);
+                await db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId).collection('settlements').add(settlementData);
                 
-                // 2. 批量更新支出狀態 (Firestore 限制一次最多 500 個)
+                // 2. 批量更新支出狀態為 'settled'
                 const batch = db.batch();
                 state.items.forEach(i => {
-                    const ref = bookRef.collection('expenses').doc(i.id);
+                    const ref = db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId).collection('expenses').doc(i.id);
                     batch.update(ref, { status: 'settled' });
                 });
                 await batch.commit();
@@ -288,23 +281,18 @@
 
         function selectPayer(name) {
             state.selectedPayer = name;
-            render();
+            render(); // 更新按鈕樣式
         }
 
         async function addParticipant() {
-            if (!state.user || !state.currentBookId) return;
             const nextName = `成員${state.participants.length + 1}`;
-            const newParticipants = [...state.participants, nextName];
-            
-            try {
+            state.participants.push(nextName);
+            if (state.currentBookId) {
                 await db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId).update({
-                    participants: newParticipants
+                    participants: state.participants
                 });
-                state.participants = newParticipants;
-                render();
-            } catch (e) {
-                showToast("更新成員失敗");
             }
+            render();
         }
 
         function switchView(v) {
@@ -320,6 +308,7 @@
             const historyBtn = document.getElementById('view-history-btn');
             const headerIcon = document.getElementById('header-icon');
 
+            // Header 更新
             const currentBook = state.books.find(b => b.id === state.currentBookId);
             bookBtn.innerText = currentBook ? currentBook.name : '點擊選擇帳本';
             bookBtn.onclick = () => { state.view = 'books'; render(); };
@@ -328,6 +317,7 @@
             activeBtn.className = `px-3 py-1.5 text-xs font-bold rounded-lg ${state.view === 'active' ? 'btn-active' : 'btn-inactive'}`;
             historyBtn.className = `px-3 py-1.5 text-xs font-bold rounded-lg ${state.view === 'history' ? 'btn-active' : 'btn-inactive'}`;
 
+            // 主內容切換
             if (state.view === 'books') {
                 renderBooksView(main);
             } else if (state.view === 'active') {
@@ -336,6 +326,7 @@
                 renderHistoryView(main);
             }
 
+            // 重新初始化圖示
             lucide.createIcons();
         }
 
@@ -387,6 +378,7 @@
 
             container.innerHTML = `
                 <div class="space-y-6 animate-in">
+                    <!-- 成員卡片 -->
                     <div class="bg-white p-6 rounded-3xl shadow-sm border">
                         <div class="flex justify-between items-center mb-4">
                             <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest">群組成員</h3>
@@ -400,6 +392,7 @@
                         </div>
                     </div>
 
+                    <!-- 快速輸入 -->
                     <div class="bg-white p-8 rounded-[2rem] shadow-sm border space-y-6">
                         <div class="space-y-4">
                             <input id="input-item-name" placeholder="品項名稱 (如：晚餐、車票)" class="w-full bg-[#F1F1F1] p-4 rounded-2xl text-sm font-bold border-none input-focus">
@@ -424,6 +417,7 @@
                         </button>
                     </div>
 
+                    <!-- 統計與明細清單 -->
                     <div class="bg-[#40514E] rounded-[2.5rem] shadow-2xl overflow-hidden text-white">
                         <div class="p-10">
                             <p class="text-[10px] font-black uppercase tracking-[0.2em] mb-2 opacity-50">目前總支出</p>
