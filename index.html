@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>好友拆帳助手 - 雲端同步版</title>
-    <!-- 核心庫加載 -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- 1. 核心樣式與基礎庫 -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     
     <style>
@@ -20,18 +20,18 @@
 <body>
     <div id="root"></div>
 
-    <!-- React 核心 -->
+    <!-- 2. React 核心依賴 -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- Firebase SDK (使用統一載入方式確保順序) -->
-    <script src="https://www.gstatic.com/firebasejs/11.1.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.1.0/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore-compat.js"></script>
+    <!-- 3. Firebase SDK (Compat 版本最穩定) -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
     <script type="babel">
-        // Firebase 初始化
+        // --- Firebase 初始化 ---
         const firebaseConfig = {
             apiKey: "AIzaSyCf3gdvdTMm5BFXjho7_xdQjE0eH4JSAzM",
             authDomain: "keep-40f68.firebaseapp.com",
@@ -42,7 +42,6 @@
             measurementId: "G-D6J8P9967X"
         };
 
-        // 初始化 Firebase 並定義常用方法
         if (!firebase.apps.length) {
             firebase.initializeApp(firebaseConfig);
         }
@@ -50,13 +49,13 @@
         const db = firebase.firestore();
         const APP_ID = 'expense-splitter-v2';
 
-        const { useState, useEffect, useRef, useMemo } = React;
+        const { useState, useEffect, useRef } = React;
 
-        // 安全圖標元件：防止外部 content.js 報錯崩潰
+        // --- 安全圖標元件 ---
         const Icon = ({ name, size = 18, className = "", ...props }) => {
             try {
                 const LucideIcon = window.lucide ? window.lucide[name] : null;
-                if (!LucideIcon) return <span className={`inline-block w-[18px] h-[18px] bg-gray-100 ${className}`}></span>;
+                if (!LucideIcon) return <span style={{width: size, height: size}} className={`inline-block bg-gray-100 ${className}`}></span>;
                 return <LucideIcon size={size} className={className} {...props} />;
             } catch (e) {
                 return null;
@@ -102,7 +101,7 @@
             const [lastSettlementData, setLastSettlementData] = useState(null);
             const receiptRef = useRef(null);
 
-            // Auth 初始化與同步功能
+            // 初始化 Auth
             useEffect(() => {
                 const unsubscribe = auth.onAuthStateChanged((u) => {
                     if (u) {
@@ -116,24 +115,24 @@
                 return () => unsubscribe();
             }, []);
 
-            // 監聽帳本清單
+            // 監聽帳本列表
             useEffect(() => {
                 if (!user) return;
                 const unsub = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books')
                     .onSnapshot((snapshot) => {
-                        const booksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        setBooks(booksData);
-                        if (!currentBookId && booksData.length > 0) setCurrentBookId(booksData[0].id);
-                    }, (err) => console.error(err));
+                        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setBooks(data);
+                        if (!currentBookId && data.length > 0) setCurrentBookId(data[0].id);
+                    });
                 return () => unsub();
             }, [user, currentBookId]);
 
-            // 監聽當前帳本資料
+            // 監聽當前帳本支出
             useEffect(() => {
                 if (!user || !currentBookId) return;
                 
-                const currentBook = books.find(b => b.id === currentBookId);
-                if (currentBook && currentBook.participants) setParticipants(currentBook.participants);
+                const curBook = books.find(b => b.id === currentBookId);
+                if (curBook && curBook.participants) setParticipants(curBook.participants);
 
                 const unsubExp = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid)
                     .collection('books').doc(currentBookId).collection('expenses')
@@ -152,11 +151,6 @@
                 return () => { unsubExp(); unsubSet(); };
             }, [user, currentBookId, books]);
 
-            const handleSignOut = async () => {
-                await auth.signOut();
-                window.location.reload();
-            };
-
             const handleAddBook = async () => {
                 if (!newBookName.trim() || !user) return;
                 try {
@@ -170,26 +164,26 @@
                 } catch (e) { setErrorMessage("新增帳本失敗"); }
             };
 
-            const updateParticipants = async (newParticipants) => {
+            const updateParticipants = async (newList) => {
                 if (!user || !currentBookId) return;
-                setParticipants(newParticipants);
+                setParticipants(newList);
                 try {
-                    await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).update({ participants: newParticipants });
-                } catch (e) { setErrorMessage("更新成員失敗"); }
+                    await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).update({ participants: newList });
+                } catch (e) { setErrorMessage("同步成員失敗"); }
             };
 
             const handleQuickAdd = async () => {
-                if (!quickInput.name || !quickInput.amount || !currentBookId) { setErrorMessage("請輸入內容"); return; }
-                const amount = parseFloat(quickInput.amount);
+                if (!quickInput.name || !quickInput.amount || !currentBookId) { setErrorMessage("請輸入品項與金額"); return; }
+                const amt = parseFloat(quickInput.amount);
                 const isForeign = quickInput.currency !== 'TWD';
-                const finalAmountInTWD = isForeign ? amount * exchangeRate : amount;
+                const finalAmt = isForeign ? amt * exchangeRate : amt;
                 
                 try {
                     await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses').add({
                         name: quickInput.name, 
-                        rawAmount: isForeign ? amount : null, 
+                        rawAmount: isForeign ? amt : null, 
                         currency: isForeign ? quickInput.currency : 'TWD',
-                        amount: finalAmountInTWD, 
+                        amount: finalAmt, 
                         payer: quickInput.payer, 
                         status: 'active', 
                         timestamp: Date.now()
@@ -199,7 +193,7 @@
             };
 
             const handleBatchAdd = async () => {
-                if (!batchText.trim() || !user || !currentBookId) return;
+                if (!batchText.trim() || !currentBookId) return;
                 const lines = batchText.split('\n');
                 const batch = db.batch();
                 let count = 0;
@@ -207,12 +201,12 @@
                     const parts = line.trim().split(/[ \t,，]+/);
                     if (parts.length >= 2) {
                         const name = parts[0];
-                        const rawAmount = parseFloat(parts[1]);
-                        if (!isNaN(rawAmount)) {
-                            let currency = isForeignMode ? currencyName : 'TWD';
-                            let finalAmount = isForeignMode ? rawAmount * exchangeRate : rawAmount;
-                            const docRef = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses').doc();
-                            batch.set(docRef, { name, rawAmount: isForeignMode ? rawAmount : null, currency, amount: finalAmount, payer: quickInput.payer, status: 'active', timestamp: Date.now() + count });
+                        const raw = parseFloat(parts[1]);
+                        if (!isNaN(raw)) {
+                            let curr = isForeignMode ? currencyName : 'TWD';
+                            let final = isForeignMode ? raw * exchangeRate : raw;
+                            const ref = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses').doc();
+                            batch.set(ref, { name, rawAmount: isForeignMode ? raw : null, currency: curr, amount: final, payer: quickInput.payer, status: 'active', timestamp: Date.now() + count });
                             count++;
                         }
                     }
@@ -223,18 +217,18 @@
             };
 
             const calculateBalances = (dataItems = items) => {
-                const totalSpent = dataItems.reduce((sum, i) => sum + i.amount, 0);
-                const avg = totalSpent / (participants.length || 1);
+                const total = dataItems.reduce((sum, i) => sum + i.amount, 0);
+                const avg = total / (participants.length || 1);
                 const bals = {};
                 participants.forEach(p => {
                     const paid = dataItems.filter(i => i.payer === p).reduce((sum, i) => sum + i.amount, 0);
                     bals[p] = paid - avg;
                 });
-                return { totalSpent, average: avg, balances: bals };
+                return { totalSpent: total, average: avg, balances: bals };
             };
 
             const handleSettlement = async () => {
-                if (items.length === 0 || !user || !currentBookId) return;
+                if (items.length === 0 || !currentBookId) return;
                 setIsSettling(true);
                 const stats = calculateBalances();
                 const settlementData = { 
@@ -244,14 +238,14 @@
                 try {
                     await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('settlements').add(settlementData);
                     const batch = db.batch();
-                    items.forEach(item => { 
-                        const ref = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses').doc(item.id);
+                    items.forEach(i => { 
+                        const ref = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses').doc(i.id);
                         batch.update(ref, { status: 'settled' }); 
                     });
                     await batch.commit();
                     setLastSettlementData(settlementData);
                     setShowReceipt(true);
-                } catch (e) { setErrorMessage("結算錯誤"); } finally { setIsSettling(false); }
+                } catch (e) { setErrorMessage("結算失敗"); } finally { setIsSettling(false); }
             };
 
             const { totalSpent, average, balances } = calculateBalances();
@@ -260,7 +254,7 @@
 
             return (
                 <div className="min-h-screen flex flex-col items-center pb-20">
-                    {/* Error Toast */}
+                    {/* Toast */}
                     {errorMessage && (
                         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[200] bg-red-500 text-white px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 font-bold animate-bounce">
                             <Icon name="AlertCircle" size={18} /> {errorMessage}
@@ -285,7 +279,7 @@
                         </div>
                     )}
 
-                    {/* Receipt Modal */}
+                    {/* 收據 Modal */}
                     {showReceipt && lastSettlementData && (
                         <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
                             <div className="w-full max-w-sm flex flex-col gap-4 my-8">
@@ -337,7 +331,7 @@
                                     <button onClick={() => setView('history')} className={`px-4 py-1.5 text-xs font-bold rounded-lg ${view === 'history' ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={view === 'history' ? { color: themeColor.primary } : {}}>歷史</button>
                                 </div>
                                 <button onClick={() => setShowUidModal(true)} className="p-2 text-slate-400 hover:text-slate-600"><Icon name="RefreshCw" size={18}/></button>
-                                <button onClick={handleSignOut} className="p-2 text-slate-400 hover:text-red-400"><Icon name="LogOut" size={18}/></button>
+                                <button onClick={() => auth.signOut().then(() => window.location.reload())} className="p-2 text-slate-400 hover:text-red-400"><Icon name="LogOut" size={18}/></button>
                             </div>
                         </div>
                     </header>
@@ -371,7 +365,7 @@
                         ) : view === 'active' ? (
                             <div className="grid md:grid-cols-2 gap-8">
                                 <div className="space-y-6">
-                                    {/* Participants */}
+                                    {/* 成員管理 */}
                                     <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-5">
                                         <div className="flex justify-between items-center">
                                             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">參與成員</h3>
@@ -414,7 +408,7 @@
                                         </div>
                                     </div>
 
-                                    {/* Input Form */}
+                                    {/* 輸入區 */}
                                     <div className="bg-white p-8 rounded-[2rem] shadow-sm border space-y-6">
                                         <div className="flex bg-slate-50 p-1 rounded-2xl">
                                             <button onClick={() => setInputMode('single')} className={`flex-1 py-2 text-xs font-black rounded-xl ${inputMode === 'single' ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={inputMode === 'single' ? { color: themeColor.primary } : {}}>單筆輸入</button>
@@ -448,7 +442,7 @@
                                     )}
                                 </div>
 
-                                {/* Right Side - Summary */}
+                                {/* 右側資訊 */}
                                 <div className="space-y-6">
                                     <div className="bg-[#40514E] rounded-[2.5rem] shadow-2xl overflow-hidden text-white border border-white/5">
                                         <div className="p-10">
@@ -472,7 +466,7 @@
                                                 {items.length === 0 ? (
                                                     <p className="text-center py-10 text-slate-300 text-xs font-bold">尚無支出紀錄</p>
                                                 ) : items.map(item => (
-                                                    <div key={item.id} className="flex justify-between items-center">
+                                                    <div key={item.id} className="flex justify-between items-center group">
                                                         <div className="flex items-center gap-3">
                                                             <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-[10px]" style={{ backgroundColor: `${themeColor.primary}1A`, color: themeColor.primary }}>{item.payer[0]}</div>
                                                             <p className="text-sm font-black text-[#40514E] truncate w-24">{item.name}</p>
@@ -495,7 +489,7 @@
                                 <h2 className="text-xl font-black flex items-center gap-2"><Icon name="Archive" size={24} style={{ color: themeColor.primary }} /> 歷史結算</h2>
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                     {settlements.map(s => (
-                                        <div key={s.id} onClick={() => { setLastSettlementData(s); setShowReceipt(true); }} className="bg-white rounded-[2.5rem] shadow-sm border p-8 cursor-pointer">
+                                        <div key={s.id} onClick={() => { setLastSettlementData(s); setShowReceipt(true); }} className="bg-white rounded-[2.5rem] shadow-sm border p-8 cursor-pointer hover:shadow-md transition-shadow">
                                             <p className="text-xs font-black text-slate-400 mb-2">{new Date(s.settledAt).toLocaleDateString()}</p>
                                             <h3 className="text-lg font-black text-[#40514E] mb-4">{s.bookName}</h3>
                                             <p className="text-2xl font-black" style={{ color: themeColor.primary }}>${s.totalSpent?.toLocaleString()}</p>
@@ -509,6 +503,7 @@
             );
         }
 
+        // 渲染 App
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
