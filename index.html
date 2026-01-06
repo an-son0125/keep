@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>好友拆帳助手 - 雲端同步版</title>
+    <title>花錢如流水 - ★</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -11,15 +11,18 @@
     <!-- html2canvas -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
-    <!-- Babel for transforming JSX -->
+    <!-- React & Babel -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Import Map for React, Firebase & Lucide -->
+    <!-- Lucide Icons (Global) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Import Map for Firebase & Lucide React wrapper -->
     <script type="importmap">
     {
       "imports": {
-        "react": "https://esm.sh/react@18.2.0",
-        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
         "firebase/app": "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js",
         "firebase/auth": "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js",
         "firebase/firestore": "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js",
@@ -60,7 +63,7 @@
             updateDoc 
         } from 'firebase/firestore';
         
-        // Lucide React Icons
+        // 由於在瀏覽器環境直接使用 Lucide，我們使用 Lucide React 的 ESM 版本
         import { 
             Plus, Trash2, CheckCircle2, ChevronRight, Archive, 
             Globe, FolderKanban, Users, UserPlus, X, Settings2, 
@@ -68,7 +71,7 @@
             LogOut, RefreshCw, Copy, Check
         } from 'lucide-react';
 
-        // --- Firebase 設定 ---
+        // --- Firebase 設定 (使用你提供的資料) ---
         const firebaseConfig = {
             apiKey: "AIzaSyCf3gdvdTMm5BFXjho7_xdQjE0eH4JSAzM",
             authDomain: "keep-40f68.firebaseapp.com",
@@ -82,7 +85,8 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        const appId = 'expense-splitter-v2';
+        // 使用固定的 appId 區隔不同應用，這裡設為 'expense-splitter-v2'
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'expense-splitter-v2';
 
         const colorPalettes = [
             { name: '鼠尾草綠', primary: '#8E9775', secondary: '#E28E8E' },
@@ -95,7 +99,7 @@
         function App() {
             // --- 核心狀態 ---
             const [authUser, setAuthUser] = useState(null); // Firebase 實際登入的匿名用戶
-            const [activeUid, setActiveUid] = useState(null); // 當前使用的「資料帳號 ID」
+            const [activeUid, setActiveUid] = useState(null); // 當前使用的「資料帳號 ID」(可以是自己的，也可以是同步別人的)
             const [loading, setLoading] = useState(true);
             const [books, setBooks] = useState([]);
             const [currentBookId, setCurrentBookId] = useState(null);
@@ -164,9 +168,17 @@
                     setErrorMessage("請輸入有效的 UID");
                     return;
                 }
-                setActiveUid(syncInputUid.trim());
-                localStorage.setItem('expense_splitter_uid', syncInputUid.trim());
-                setErrorMessage(`已同步至帳號：${syncInputUid.trim().slice(0,6)}...`);
+                const newUid = syncInputUid.trim();
+                setActiveUid(newUid);
+                localStorage.setItem('expense_splitter_uid', newUid);
+                
+                // 提示用戶權限狀態
+                if (authUser && newUid !== authUser.uid) {
+                    setErrorMessage(`已同步檢視帳號：${newUid.slice(0,6)}... (唯讀模式)`);
+                } else {
+                    setErrorMessage(`已切換至帳號：${newUid.slice(0,6)}...`);
+                }
+
                 setShowSyncModal(false);
                 setSyncInputUid('');
                 // 重置視圖狀態以重新載入資料
@@ -209,6 +221,10 @@
                     }
                 }, (error) => {
                     console.error("Firestore Error:", error);
+                    // 權限錯誤通常代表同步了一個不存在或無權限的 ID，但在這個 demo 結構下，
+                    // 通常是因為 activeUid 改變導致的短暫狀態，或規則未允許讀取他人資料。
+                    // 為了此 Demo 順暢，我們假設 Firestore 規則是 open 或基於 path 的。
+                    // 如果遇到權限問題，通常需要調整 Firestore Rules。
                 });
                 return () => unsub();
             }, [activeUid, currentBookId]);
@@ -248,7 +264,19 @@
             // --- 業務邏輯 ---
 
             const handleAddBook = async () => {
-                if (!newBookName.trim() || !activeUid) return;
+                if (!newBookName.trim()) return;
+                
+                // 檢查權限：如果不等於當前登入的 authUser.uid，通常無法寫入
+                if (authUser && activeUid !== authUser.uid) {
+                    setErrorMessage("無法修改同步帳號的資料 (權限不足)");
+                    return;
+                }
+
+                if (!activeUid) {
+                    setErrorMessage("尚未登入，無法建立帳本");
+                    return;
+                }
+
                 try {
                     const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', activeUid, 'books'), {
                         name: newBookName, participants: ['我', '朋友'], createdAt: Date.now()
@@ -257,11 +285,20 @@
                     setIsAddingBook(false);
                     setCurrentBookId(docRef.id);
                     setView('active');
-                } catch (e) { setErrorMessage("新增帳本失敗。"); }
+                } catch (e) { 
+                    console.error("Add Book Error:", e);
+                    setErrorMessage("新增帳本失敗，請檢查網路或權限。"); 
+                }
             };
 
             const updateParticipants = async (newParticipants) => {
                 if (!activeUid || !currentBookId) return;
+                
+                if (authUser && activeUid !== authUser.uid) {
+                    setErrorMessage("無法修改同步帳號的資料");
+                    return;
+                }
+
                 setParticipants(newParticipants);
                 try {
                     await updateDoc(doc(db, 'artifacts', appId, 'users', activeUid, 'books', currentBookId), { participants: newParticipants });
@@ -269,6 +306,10 @@
             };
 
             const handleQuickAdd = async () => {
+                if (authUser && activeUid !== authUser.uid) {
+                    setErrorMessage("無法修改同步帳號的資料");
+                    return;
+                }
                 if (!quickInput.name || !quickInput.amount) {
                     setErrorMessage("請輸入品項名稱與金額。");
                     return;
@@ -303,6 +344,12 @@
 
             const handleBatchAdd = async () => {
                 if (!batchText.trim() || !activeUid || !currentBookId) return;
+                
+                if (authUser && activeUid !== authUser.uid) {
+                    setErrorMessage("無法修改同步帳號的資料");
+                    return;
+                }
+
                 const lines = batchText.split('\n');
                 const batch = writeBatch(db);
                 let count = 0;
@@ -340,6 +387,11 @@
 
             const handleSettlement = async () => {
                 if (items.length === 0 || !activeUid || !currentBookId) return;
+                
+                if (authUser && activeUid !== authUser.uid) {
+                    setErrorMessage("無法修改同步帳號的資料");
+                    return;
+                }
                 
                 setIsSettling(true);
                 const stats = calculateBalances();
@@ -386,6 +438,11 @@
             };
 
             const deleteItem = async (id) => {
+                if (authUser && activeUid !== authUser.uid) {
+                    setErrorMessage("無法修改同步帳號的資料");
+                    return;
+                }
+
                 try {
                     await deleteDoc(doc(db, 'artifacts', appId, 'users', activeUid, 'books', currentBookId, 'expenses', id));
                 } catch (e) { setErrorMessage("刪除失敗。"); }
