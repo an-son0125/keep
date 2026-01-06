@@ -3,21 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>好友拆帳助手 - 雲端同步版</title>
+    <title>好友拆帳助手 - 雲端同步版 (穩定原生版)</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & ReactDOM (Production) -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- Html2Canvas -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-
     <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
@@ -30,17 +23,77 @@
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-in { animation: fadeIn 0.3s ease-out forwards; }
+        .btn-active { background-color: #f1f1f1; }
+        .btn-inactive { color: #94a3b8; }
     </style>
 </head>
-<body class="bg-[#F5F5F5]">
-    <div id="root"></div>
+<body class="bg-[#F5F5F5] text-[#576F72]">
+    <div id="app" class="min-h-screen flex flex-col items-center">
+        <!-- Header -->
+        <header class="w-full bg-white border-b sticky top-0 z-30 px-4 py-4 shadow-sm flex justify-center">
+            <div class="w-full max-w-5xl flex justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <i data-lucide="folder-kanban" id="theme-icon-primary" class="w-[22px] h-[22px]"></i>
+                    <button id="book-title-btn" class="text-sm font-black">載入中...</button>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="switchView('active')" id="view-active-btn" class="px-3 py-1.5 text-xs font-bold rounded-lg btn-active">現行</button>
+                    <button onclick="switchView('history')" id="view-history-btn" class="px-3 py-1.5 text-xs font-bold rounded-lg btn-inactive">歷史</button>
+                    <button onclick="openSyncModal()" class="p-2 text-slate-400"><i data-lucide="cloud" class="w-5 h-5"></i></button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main id="main-content" class="w-full max-w-xl p-4 md:p-8 space-y-6 pb-32">
+            <!-- 動態注入內容 -->
+        </main>
+
+        <!-- Modals and Toasts -->
+        <div id="sync-modal" class="fixed inset-0 z-[150] bg-black/50 backdrop-blur-sm hidden items-center justify-center p-4">
+            <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl animate-in space-y-4">
+                <div class="flex justify-between items-center">
+                    <h3 class="font-black text-lg flex items-center gap-2"><i data-lucide="cloud"></i> 雲端同步</h3>
+                    <button onclick="closeSyncModal()"><i data-lucide="x"></i></button>
+                </div>
+                <div class="bg-slate-50 p-4 rounded-2xl">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase">同步 ID</p>
+                    <div class="flex items-center gap-2 mt-1">
+                        <code id="display-account-key" class="bg-white px-2 py-1 rounded border flex-1 text-xs font-mono font-bold text-center">---</code>
+                        <button onclick="copyAccountKey()" class="p-2"><i data-lucide="copy" class="w-4 h-4"></i></button>
+                    </div>
+                </div>
+                <div class="pt-4 border-t space-y-3">
+                    <input id="input-sync-key" placeholder="輸入同步 ID..." class="w-full bg-slate-100 p-3 rounded-xl text-sm">
+                    <button onclick="loadSyncKey()" id="sync-submit-btn" class="w-full text-white py-3 rounded-xl font-bold text-sm bg-[#8E9775]">載入資料</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="receipt-modal" class="fixed inset-0 z-[100] bg-black/70 backdrop-blur-md hidden items-center justify-center p-4 overflow-y-auto">
+            <div id="receipt-container" class="w-full max-w-sm flex flex-col gap-4 animate-in my-8">
+                <!-- 收據內容 -->
+            </div>
+        </div>
+
+        <div id="toast" class="fixed bottom-10 bg-red-500 text-white px-6 py-3 rounded-full shadow-2xl font-bold hidden animate-in"></div>
+    </div>
 
     <script>
-        // 使用純 JS 模式以繞過 Babel 錯誤 #130
-        const e = React.createElement;
-        const { useState, useEffect, useRef } = React;
+        // --- 狀態管理 ---
+        let state = {
+            accountKey: localStorage.getItem('expense_account_key') || Math.random().toString(36).substr(2, 9),
+            books: [],
+            currentBookId: null,
+            view: 'active', // active, history, books
+            items: [],
+            settlements: [],
+            participants: ['我', '朋友'],
+            theme: { primary: '#8E9775', secondary: '#E28E8E' },
+            isAddingBook: false
+        };
 
-        // Firebase 初始化
+        // --- Firebase 初始化 ---
         const firebaseConfig = {
             apiKey: "AIzaSyCf3gdvdTMm5BFXjho7_xdQjE0eH4JSAzM",
             authDomain: "keep-40f68.firebaseapp.com",
@@ -49,329 +102,366 @@
             messagingSenderId: "419621970498",
             appId: "1:419621970498:web:9370a95618f4f8170103db"
         };
-
-        if (!firebase.apps.length) {
-            firebase.initializeApp(firebaseConfig);
-        }
-        const auth = firebase.auth();
+        firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
         const appId = 'expense-splitter-cloud-v1';
 
-        const colorPalettes = [
-            { name: '鼠尾草綠', primary: '#8E9775', secondary: '#E28E8E' },
-            { name: '乾燥玫瑰', primary: '#B27070', secondary: '#7D9D9C' },
-            { name: '迷霧藍', primary: '#7D9D9C', secondary: '#B2967D' },
-            { name: '奶油黃', primary: '#C2B490', secondary: '#8E9775' },
-            { name: '暗礦灰', primary: '#576F72', secondary: '#8E9775' }
-        ];
-
-        const generateId = () => Math.random().toString(36).substr(2, 9);
-
-        // 圖示組件封裝
-        const Icon = ({ name, size = 20, className = "", style = {} }) => {
-            return e('i', { 
-                'data-lucide': name, 
-                className: className,
-                style: { width: size, height: size, ...style }
+        // --- 初始化入口 ---
+        window.onload = async () => {
+            localStorage.setItem('expense_account_key', state.accountKey);
+            document.getElementById('display-account-key').innerText = state.accountKey;
+            
+            firebase.auth().signInAnonymously().then(() => {
+                listenToBooks();
             });
+            
+            render();
         };
 
-        // 印章組件
-        const Postmark = ({ date, size = "w-24 h-24", opacity = "opacity-30" }) => {
-            const d = new Date(date);
-            const dateStr = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
-            return e('div', { className: `relative ${size} flex items-center justify-center rotate-12 ${opacity} select-none pointer-events-none` },
-                e('svg', { viewBox: "0 0 100 100", className: "w-full h-full fill-none stroke-current text-[#40514E]" },
-                    e('circle', { cx: "50", cy: "50", r: "46", strokeWidth: "0.5", strokeDasharray: "1 1" }),
-                    e('circle', { cx: "50", cy: "50", r: "42", strokeWidth: "1.5" }),
-                    e('line', { x1: "20", y1: "40", x2: "80", y2: "40", strokeWidth: "1" }),
-                    e('text', { x: "50", y: "54", textAnchor: "middle", className: "text-[11px] font-black fill-current stroke-none" }, dateStr),
-                    e('line', { x1: "20", y1: "60", x2: "80", y2: "60", strokeWidth: "1" }),
-                    e('text', { x: "50", y: "72", textAnchor: "middle", className: "text-[6px] font-bold fill-current stroke-none uppercase tracking-widest" }, "Paid Clear")
-                )
-            );
-        };
-
-        function App() {
-            const [user, setUser] = useState(null);
-            const [accountKey, setAccountKey] = useState(() => localStorage.getItem('expense_account_key') || generateId());
-            const [loading, setLoading] = useState(true);
-            const [books, setBooks] = useState([]);
-            const [currentBookId, setCurrentBookId] = useState(null);
-            const [isAddingBook, setIsAddingBook] = useState(false);
-            const [newBookName, setNewBookName] = useState('');
-            const [items, setItems] = useState([]);
-            const [settlements, setSettlements] = useState([]);
-            const [participants, setParticipants] = useState(['我', '朋友']);
-            const [themeColor, setThemeColor] = useState(colorPalettes[0]);
-            const [showPalette, setShowPalette] = useState(false);
-            const [quickInput, setQuickInput] = useState({ name: '', amount: '', payer: '我' });
-            const [view, setView] = useState('active'); 
-            const [errorMessage, setErrorMessage] = useState('');
-            const [showReceipt, setShowReceipt] = useState(false);
-            const [lastSettlementData, setLastSettlementData] = useState(null);
-            const [showSyncModal, setShowSyncModal] = useState(false);
-            const [inputSyncKey, setInputSyncKey] = useState('');
-
-            const receiptRef = useRef(null);
-
-            useEffect(() => {
-                auth.signInAnonymously().catch(e => console.error(e));
-                const unsubscribe = auth.onAuthStateChanged((u) => {
-                    setUser(u);
-                    setLoading(false);
+        // --- 資料監聽 ---
+        function listenToBooks() {
+            db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books')
+                .onSnapshot(snapshot => {
+                    state.books = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    if (!state.currentBookId && state.books.length > 0) {
+                        state.currentBookId = state.books[0].id;
+                    }
+                    if (state.currentBookId) listenToDetails();
+                    render();
                 });
-                localStorage.setItem('expense_account_key', accountKey);
-                return () => unsubscribe();
-            }, [accountKey]);
-
-            useEffect(() => {
-                if (!user || !accountKey) return;
-                const unsub = db.collection('artifacts').doc(appId).collection('users').doc(accountKey).collection('books')
-                    .onSnapshot(snapshot => {
-                        setBooks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                    });
-                return () => unsub();
-            }, [user, accountKey]);
-
-            useEffect(() => {
-                if (!user || !currentBookId || !accountKey) return;
-                const currentBook = books.find(b => b.id === currentBookId);
-                if (currentBook) setParticipants(currentBook.participants || ['我', '朋友']);
-
-                const unsubExp = db.collection('artifacts').doc(appId).collection('users').doc(accountKey).collection('books').doc(currentBookId).collection('expenses')
-                    .onSnapshot(snapshot => {
-                        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        setItems(data.filter(i => i.status !== 'settled').sort((a, b) => b.timestamp - a.timestamp));
-                    });
-
-                const unsubSet = db.collection('artifacts').doc(appId).collection('users').doc(accountKey).collection('books').doc(currentBookId).collection('settlements')
-                    .onSnapshot(snapshot => {
-                        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        setSettlements(data.sort((a, b) => b.settledAt - a.settledAt));
-                    });
-
-                return () => { unsubExp(); unsubSet(); };
-            }, [user, currentBookId, books, accountKey]);
-
-            useEffect(() => { 
-                if (typeof lucide !== 'undefined') lucide.createIcons(); 
-            });
-
-            const handleAddBook = async () => {
-                if (!newBookName.trim()) return;
-                const res = await db.collection('artifacts').doc(appId).collection('users').doc(accountKey).collection('books').add({
-                    name: newBookName, participants: ['我', '朋友'], createdAt: Date.now()
-                });
-                setNewBookName('');
-                setIsAddingBook(false);
-                setCurrentBookId(res.id);
-                setView('active');
-            };
-
-            const calculateBalances = (dataItems = items) => {
-                const totalSpent = dataItems.reduce((sum, i) => sum + i.amount, 0);
-                const average = totalSpent / (participants.length || 1);
-                const balances = {};
-                participants.forEach(p => {
-                    const paid = dataItems.filter(i => i.payer === p).reduce((sum, i) => sum + i.amount, 0);
-                    balances[p] = paid - average;
-                });
-                return { totalSpent, average, balances };
-            };
-
-            const handleQuickAdd = async () => {
-                if (!quickInput.name || !quickInput.amount || !currentBookId) return;
-                const amount = parseFloat(quickInput.amount);
-                await db.collection('artifacts').doc(appId).collection('users').doc(accountKey).collection('books').doc(currentBookId).collection('expenses').add({
-                    name: quickInput.name,
-                    amount: amount, payer: quickInput.payer, status: 'active', timestamp: Date.now()
-                });
-                setQuickInput({ ...quickInput, name: '', amount: '' });
-            };
-
-            const handleSettlement = async () => {
-                if (items.length === 0) return;
-                const stats = calculateBalances();
-                const settlementData = { 
-                    items: [...items], ...stats, settledAt: Date.now(),
-                    bookName: books.find(b => b.id === currentBookId)?.name || '未命名帳本'
-                };
-                try {
-                    await db.collection('artifacts').doc(appId).collection('users').doc(accountKey).collection('books').doc(currentBookId).collection('settlements').add(settlementData);
-                    const batch = db.batch();
-                    items.forEach(i => {
-                        const ref = db.collection('artifacts').doc(appId).collection('users').doc(accountKey).collection('books').doc(currentBookId).collection('expenses').doc(i.id);
-                        batch.update(ref, { status: 'settled' });
-                    });
-                    await batch.commit();
-                    setLastSettlementData(settlementData);
-                    setShowReceipt(true);
-                } catch (e) { setErrorMessage("結算錯誤"); }
-            };
-
-            if (loading) return e('div', { className: "flex h-screen items-center justify-center bg-[#F1F1F1]" }, 
-                e(Icon, { name: "loader-2", className: "animate-spin text-[#8E9775]", size: 32 })
-            );
-
-            const { totalSpent, balances } = calculateBalances();
-
-            return e('div', { className: "min-h-screen bg-[#F5F5F5] font-sans text-[#576F72] flex flex-col items-center" },
-                // 同步視窗
-                showSyncModal && e('div', { className: "fixed inset-0 z-[150] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" },
-                    e('div', { className: "bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl animate-in space-y-4" },
-                        e('div', { className: "flex justify-between items-center" },
-                            e('h3', { className: "font-black text-lg flex items-center gap-2" }, e(Icon, { name: "cloud" }), "雲端同步"),
-                            e('button', { onClick: () => setShowSyncModal(false) }, e(Icon, { name: "x" }))
-                        ),
-                        e('div', { className: "bg-slate-50 p-4 rounded-2xl" },
-                            e('p', { className: "text-[10px] font-bold text-slate-400 uppercase" }, "同步 ID"),
-                            e('div', { className: "flex items-center gap-2 mt-1" },
-                                e('code', { className: "bg-white px-2 py-1 rounded border flex-1 text-xs font-mono font-bold text-center" }, accountKey),
-                                e('button', { onClick: () => { navigator.clipboard.writeText(accountKey); setErrorMessage("已複製"); }, className: "p-2" }, e(Icon, { name: "copy", size: 16 }))
-                            )
-                        ),
-                        e('div', { className: "pt-4 border-t space-y-3" },
-                            e('input', { value: inputSyncKey, onChange: (e) => setInputSyncKey(e.target.value), placeholder: "輸入同步 ID...", className: "w-full bg-slate-100 p-3 rounded-xl text-sm" }),
-                            e('button', { onClick: () => { setAccountKey(inputSyncKey); setShowSyncModal(false); }, style: { backgroundColor: themeColor.primary }, className: "w-full text-white py-3 rounded-xl font-bold text-sm" }, "載入資料")
-                        )
-                    )
-                ),
-
-                // 收據視窗
-                showReceipt && lastSettlementData && e('div', { className: "fixed inset-0 z-[100] bg-black/70 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto" },
-                    e('div', { className: "w-full max-w-sm flex flex-col gap-4 animate-in my-8" },
-                        e('div', { ref: receiptRef, className: "bg-white rounded-3xl shadow-2xl relative p-8" },
-                            e('div', { className: "absolute top-6 right-6" }, e(Postmark, { date: lastSettlementData.settledAt, size: "w-20 h-20", opacity: "opacity-100" })),
-                            e('div', { className: "space-y-1 mb-8" },
-                                e('h2', { className: "text-xl font-black text-[#40514E]" }, lastSettlementData.bookName),
-                                e('p', { className: "text-[10px] font-bold text-slate-400 uppercase tracking-widest" }, "結算清單")
-                            ),
-                            e('div', { className: "bg-[#F1F1F1]/50 p-6 rounded-2xl mb-8 space-y-4" },
-                                e('div', { className: "flex justify-between items-end" },
-                                    e('span', { className: "text-[10px] font-black text-slate-400 uppercase" }, "總支出"),
-                                    e('span', { className: "text-2xl font-black text-[#40514E]" }, `$${lastSettlementData.totalSpent.toLocaleString()}`)
-                                )
-                            ),
-                            e('div', { className: "space-y-6" },
-                                Object.entries(lastSettlementData.balances).map(([name, bal]) => 
-                                    e('div', { key: name, className: "flex justify-between items-center" },
-                                        e('span', { className: "text-sm font-bold text-slate-600" }, name),
-                                        e('span', { className: `text-sm font-black ${bal >= 0 ? 'text-[#8E9775]' : 'text-[#E28E8E]'}` }, 
-                                            `${bal >= 0 ? '收' : '付'} $${Math.abs(bal).toLocaleString()}`
-                                        )
-                                    )
-                                )
-                            )
-                        ),
-                        e('button', { onClick: () => setShowReceipt(false), className: "w-full bg-white py-4 rounded-2xl font-black shadow-lg" }, "關閉")
-                    )
-                ),
-
-                // Header
-                e('header', { className: "w-full bg-white border-b sticky top-0 z-30 px-4 py-4 shadow-sm flex justify-center" },
-                    e('div', { className: "w-full max-w-5xl flex justify-between items-center" },
-                        e('div', { className: "flex items-center gap-3" },
-                            e(Icon, { name: "folder-kanban", style: { color: themeColor.primary }, size: 22 }),
-                            e('button', { onClick: () => setView('books'), className: "text-sm font-black" }, 
-                                books.find(b => b.id === currentBookId)?.name || '我的帳本庫'
-                            )
-                        ),
-                        e('div', { className: "flex items-center gap-2" },
-                            e('button', { onClick: () => setView('active'), className: `px-3 py-1.5 text-xs font-bold rounded-lg ${view === 'active' ? 'bg-slate-100' : 'text-slate-400'}` }, "現行"),
-                            e('button', { onClick: () => setView('history'), className: `px-3 py-1.5 text-xs font-bold rounded-lg ${view === 'history' ? 'bg-slate-100' : 'text-slate-400'}` }, "歷史"),
-                            e('button', { onClick: () => setShowSyncModal(true), className: "p-2 text-slate-400" }, e(Icon, { name: "cloud" }))
-                        )
-                    )
-                ),
-
-                // Main
-                e('main', { className: "w-full max-w-xl p-4 md:p-8 space-y-6 pb-32" },
-                    view === 'books' ? e('div', { className: "animate-in space-y-4" },
-                        e('div', { className: "flex justify-between items-center" },
-                            e('h2', { className: "font-black text-lg" }, "我的帳本庫"),
-                            e('button', { onClick: () => setIsAddingBook(true), style: { backgroundColor: themeColor.primary }, className: "text-white p-2 rounded-full" }, e(Icon, { name: "plus" }))
-                        ),
-                        isAddingBook && e('div', { className: "bg-white p-6 rounded-3xl shadow-sm border space-y-4" },
-                            e('input', { autoFocus: true, placeholder: "帳本名稱...", value: newBookName, onChange: (e) => setNewBookName(e.target.value), className: "w-full bg-[#F1F1F1] p-4 rounded-2xl text-sm border-none" }),
-                            e('button', { onClick: handleAddBook, style: { backgroundColor: themeColor.primary }, className: "w-full text-white py-3 rounded-2xl font-bold" }, "建立")
-                        ),
-                        e('div', { className: "grid gap-4" },
-                            books.map(book => e('div', { key: book.id, onClick: () => { setCurrentBookId(book.id); setView('active'); }, className: "bg-white p-6 rounded-3xl border hover:border-slate-300 cursor-pointer flex justify-between items-center" },
-                                e('span', { className: "font-black text-lg" }, book.name),
-                                e(Icon, { name: "chevron-right", className: "text-slate-300", size: 16 })
-                            ))
-                        )
-                    ) : view === 'active' ? e('div', { className: "space-y-6 animate-in" },
-                        e('div', { className: "bg-white p-6 rounded-3xl shadow-sm border" },
-                            e('div', { className: "flex justify-between items-center mb-4" },
-                                e('h3', { className: "text-xs font-black text-slate-400 uppercase" }, "成員"),
-                                e('button', { onClick: () => setShowPalette(!showPalette) }, e(Icon, { name: "palette", size: 16 }))
-                            ),
-                            e('div', { className: "flex flex-wrap gap-2" },
-                                participants.map((p, idx) => e('div', { key: idx, className: "bg-[#F1F1F1] px-4 py-2 rounded-2xl text-xs font-bold" }, p)),
-                                e('button', { onClick: () => { 
-                                    const newP = [...participants, `成員${participants.length+1}`];
-                                    setParticipants(newP);
-                                    db.collection('artifacts').doc(appId).collection('users').doc(accountKey).collection('books').doc(currentBookId).update({ participants: newP });
-                                }, className: "text-slate-300" }, e(Icon, { name: "user-plus", size: 16 }))
-                            )
-                        ),
-                        e('div', { className: "bg-white p-8 rounded-[2rem] shadow-sm border space-y-6" },
-                            e('input', { placeholder: "品項名稱", value: quickInput.name, onChange: (e) => setQuickInput({...quickInput, name: e.target.value}), className: "w-full bg-[#F1F1F1] p-4 rounded-2xl text-sm font-bold border-none" }),
-                            e('input', { type: "number", placeholder: "金額", value: quickInput.amount, onChange: (e) => setQuickInput({...quickInput, amount: e.target.value}), className: "w-full bg-[#F1F1F1] p-4 rounded-2xl text-sm font-bold border-none" }),
-                            e('div', { className: "flex flex-wrap gap-2" },
-                                participants.map(p => e('button', { 
-                                    key: p, 
-                                    onClick: () => setQuickInput({...quickInput, payer: p}), 
-                                    className: `px-4 py-2 rounded-2xl text-xs font-bold border-2 ${quickInput.payer === p ? 'text-white' : 'bg-white text-slate-400 border-slate-100'}`,
-                                    style: quickInput.payer === p ? {backgroundColor: themeColor.primary, borderColor: themeColor.primary} : {}
-                                }, p))
-                            ),
-                            e('button', { onClick: handleQuickAdd, className: "w-full text-white py-4 rounded-2xl font-black text-sm shadow-lg", style: { backgroundColor: '#40514E' } }, "新增紀錄")
-                        ),
-                        e('div', { className: "bg-[#40514E] rounded-[2.5rem] shadow-2xl overflow-hidden text-white" },
-                            e('div', { className: "p-10" },
-                                e('p', { className: "text-[10px] font-black uppercase tracking-[0.2em] mb-2 opacity-50" }, "總支出金額"),
-                                e('h2', { className: "text-4xl font-black" }, `$${totalSpent.toLocaleString()}`),
-                                e('div', { className: "mt-8 space-y-3" },
-                                    participants.map(p => e('div', { key: p, className: "flex justify-between items-center bg-white/5 p-4 rounded-2xl" },
-                                        e('span', { className: "font-bold text-sm" }, p),
-                                        e('span', { className: "font-black text-sm", style: { color: balances[p] >= 0 ? themeColor.primary : themeColor.secondary } }, 
-                                            `${balances[p] >= 0 ? '+' : '-'}$${Math.abs(balances[p]).toLocaleString()}`
-                                        )
-                                    ))
-                                )
-                            ),
-                            e('div', { className: "bg-white text-[#576F72] p-8 rounded-t-[2.5rem]" },
-                                e('div', { className: "space-y-4" },
-                                    items.map(item => e('div', { key: item.id, className: "flex justify-between items-center" },
-                                        e('span', { className: "text-sm font-black text-[#40514E]" }, `${item.name} (${item.payer})`),
-                                        e('span', { className: "font-black text-[#40514E] text-sm" }, `$${item.amount.toLocaleString()}`)
-                                    ))
-                                ),
-                                items.length > 0 && e('button', { onClick: handleSettlement, style: { backgroundColor: themeColor.primary }, className: "w-full text-white py-4 rounded-2xl font-black text-sm mt-8 shadow-xl" }, "進行結算")
-                            )
-                        )
-                    ) : e('div', { className: "space-y-6 animate-in" },
-                        settlements.map(s => e('div', { key: s.id, onClick: () => { setLastSettlementData(s); setShowReceipt(true); }, className: "bg-white p-8 rounded-[2.5rem] border relative overflow-hidden cursor-pointer" },
-                            e('div', { className: "flex justify-between items-start" },
-                                e('div', { className: "" },
-                                    e('p', { className: "text-xs font-black text-slate-400" }, new Date(s.settledAt).toLocaleDateString()),
-                                    e('p', { className: "font-black text-[#40514E] mt-1" }, s.bookName)
-                                ),
-                                e('p', { className: "text-xl font-black text-[#40514E]" }, `$${s.totalSpent.toLocaleString()}`)
-                            ),
-                            e('div', { className: "absolute -bottom-4 -right-4" }, e(Postmark, { date: s.settledAt, size: "w-24 h-24" }))
-                        ))
-                    )
-                ),
-                errorMessage && e('div', { className: "fixed bottom-10 bg-red-500 text-white px-6 py-3 rounded-full shadow-2xl font-bold" }, errorMessage)
-            );
         }
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(e(App));
+        function listenToDetails() {
+            if (!state.currentBookId) return;
+            const book = state.books.find(b => b.id === state.currentBookId);
+            if (book) state.participants = book.participants || ['我', '朋友'];
+
+            // 監聽支出
+            db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId).collection('expenses')
+                .onSnapshot(snapshot => {
+                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    state.items = data.filter(i => i.status !== 'settled').sort((a, b) => b.timestamp - a.timestamp);
+                    render();
+                });
+
+            // 監聽歷史
+            db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId).collection('settlements')
+                .onSnapshot(snapshot => {
+                    state.settlements = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => b.settledAt - a.settledAt);
+                    render();
+                });
+        }
+
+        // --- 功能邏輯 ---
+        async function handleAddBook() {
+            const name = document.getElementById('new-book-name').value;
+            if (!name.trim()) return;
+            const res = await db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').add({
+                name: name, participants: ['我', '朋友'], createdAt: Date.now()
+            });
+            state.currentBookId = res.id;
+            state.view = 'active';
+            render();
+        }
+
+        async function handleQuickAdd() {
+            const nameInput = document.getElementById('input-item-name');
+            const amountInput = document.getElementById('input-item-amount');
+            const payer = document.querySelector('[data-payer-active="true"]')?.dataset.payer || '我';
+            
+            if (!nameInput.value || !amountInput.value || !state.currentBookId) return;
+
+            await db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId).collection('expenses').add({
+                name: nameInput.value,
+                amount: parseFloat(amountInput.value),
+                payer: payer,
+                status: 'active',
+                timestamp: Date.now()
+            });
+            render();
+        }
+
+        async function handleSettlement() {
+            if (state.items.length === 0) return;
+            const stats = calculateBalances();
+            const settlementData = {
+                items: [...state.items],
+                ...stats,
+                settledAt: Date.now(),
+                bookName: state.books.find(b => b.id === state.currentBookId)?.name || '未命名帳本'
+            };
+
+            await db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId).collection('settlements').add(settlementData);
+            const batch = db.batch();
+            state.items.forEach(i => {
+                const ref = db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId).collection('expenses').doc(i.id);
+                batch.update(ref, { status: 'settled' });
+            });
+            await batch.commit();
+            showReceipt(settlementData);
+        }
+
+        function calculateBalances() {
+            const totalSpent = state.items.reduce((sum, i) => sum + i.amount, 0);
+            const average = totalSpent / (state.participants.length || 1);
+            const balances = {};
+            state.participants.forEach(p => {
+                const paid = state.items.filter(i => i.payer === p).reduce((sum, i) => sum + i.amount, 0);
+                balances[p] = paid - average;
+            });
+            return { totalSpent, average, balances };
+        }
+
+        // --- UI 渲染引擎 ---
+        function render() {
+            const main = document.getElementById('main-content');
+            const bookBtn = document.getElementById('book-title-btn');
+            const activeBtn = document.getElementById('view-active-btn');
+            const historyBtn = document.getElementById('view-history-btn');
+
+            // 更新 Header 狀態
+            const currentBook = state.books.find(b => b.id === state.currentBookId);
+            bookBtn.innerText = currentBook ? currentBook.name : '選擇帳本';
+            bookBtn.onclick = () => { state.view = 'books'; render(); };
+
+            activeBtn.className = `px-3 py-1.5 text-xs font-bold rounded-lg ${state.view === 'active' ? 'btn-active' : 'btn-inactive'}`;
+            historyBtn.className = `px-3 py-1.5 text-xs font-bold rounded-lg ${state.view === 'history' ? 'btn-active' : 'btn-inactive'}`;
+
+            if (state.view === 'books') {
+                renderBooksView(main);
+            } else if (state.view === 'active') {
+                renderActiveView(main);
+            } else {
+                renderHistoryView(main);
+            }
+
+            lucide.createIcons();
+        }
+
+        function renderBooksView(container) {
+            container.innerHTML = `
+                <div class="animate-in space-y-4">
+                    <div class="flex justify-between items-center">
+                        <h2 class="font-black text-lg">我的帳本庫</h2>
+                        <button onclick="state.isAddingBook = true; render();" class="text-white p-2 rounded-full" style="background-color: ${state.theme.primary}">
+                            <i data-lucide="plus"></i>
+                        </button>
+                    </div>
+                    ${state.isAddingBook ? `
+                        <div class="bg-white p-6 rounded-3xl shadow-sm border space-y-4">
+                            <input id="new-book-name" placeholder="帳本名稱..." class="w-full bg-[#F1F1F1] p-4 rounded-2xl text-sm border-none">
+                            <button onclick="handleAddBook()" class="w-full text-white py-3 rounded-2xl font-bold" style="background-color: ${state.theme.primary}">建立</button>
+                        </div>
+                    ` : ''}
+                    <div class="grid gap-4">
+                        ${state.books.map(b => `
+                            <div onclick="selectBook('${b.id}')" class="bg-white p-6 rounded-3xl border hover:border-slate-300 cursor-pointer flex justify-between items-center">
+                                <span class="font-black text-lg">${b.name}</span>
+                                <i data-lucide="chevron-right" class="text-slate-300"></i>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderActiveView(container) {
+            const { totalSpent, balances } = calculateBalances();
+            const tempPayer = document.getElementById('input-item-name')?.dataset.lastPayer || '我';
+
+            container.innerHTML = `
+                <div class="space-y-6 animate-in">
+                    <div class="bg-white p-6 rounded-3xl shadow-sm border">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xs font-black text-slate-400 uppercase">成員</h3>
+                            <button><i data-lucide="palette" class="w-4 h-4"></i></button>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            ${state.participants.map(p => `<div class="bg-[#F1F1F1] px-4 py-2 rounded-2xl text-xs font-bold">${p}</div>`).join('')}
+                            <button onclick="addParticipant()" class="text-slate-300"><i data-lucide="user-plus" class="w-4 h-4"></i></button>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-8 rounded-[2rem] shadow-sm border space-y-6">
+                        <input id="input-item-name" placeholder="品項名稱" class="w-full bg-[#F1F1F1] p-4 rounded-2xl text-sm font-bold border-none">
+                        <input id="input-item-amount" type="number" placeholder="金額" class="w-full bg-[#F1F1F1] p-4 rounded-2xl text-sm font-bold border-none">
+                        <div class="flex flex-wrap gap-2" id="payer-selector">
+                            ${state.participants.map(p => `
+                                <button onclick="selectPayer('${p}')" data-payer="${p}" data-payer-active="${p === '我'}" 
+                                    class="payer-btn px-4 py-2 rounded-2xl text-xs font-bold border-2 ${p === '我' ? 'text-white' : 'bg-white text-slate-400 border-slate-100'}"
+                                    style="${p === '我' ? `background-color: ${state.theme.primary}; border-color: ${state.theme.primary}` : ''}">
+                                    ${p}
+                                </button>
+                            `).join('')}
+                        </div>
+                        <button onclick="handleQuickAdd()" class="w-full text-white py-4 rounded-2xl font-black text-sm shadow-lg" style="background-color: #40514E">新增紀錄</button>
+                    </div>
+
+                    <div class="bg-[#40514E] rounded-[2.5rem] shadow-2xl overflow-hidden text-white">
+                        <div class="p-10">
+                            <p class="text-[10px] font-black uppercase tracking-[0.2em] mb-2 opacity-50">總支出金額</p>
+                            <h2 class="text-4xl font-black">$${totalSpent.toLocaleString()}</h2>
+                            <div class="mt-8 space-y-3">
+                                ${state.participants.map(p => `
+                                    <div class="flex justify-between items-center bg-white/5 p-4 rounded-2xl">
+                                        <span class="font-bold text-sm">${p}</span>
+                                        <span class="font-black text-sm" style="color: ${balances[p] >= 0 ? state.theme.primary : state.theme.secondary}">
+                                            ${balances[p] >= 0 ? '+' : '-'}$${Math.abs(balances[p]).toLocaleString()}
+                                        </span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                        <div class="bg-white text-[#576F72] p-8 rounded-t-[2.5rem]">
+                            <div class="space-y-4">
+                                ${state.items.map(item => `
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-sm font-black text-[#40514E]">${item.name} (${item.payer})</span>
+                                        <span class="font-black text-[#40514E] text-sm">$${item.amount.toLocaleString()}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                            ${state.items.length > 0 ? `<button onclick="handleSettlement()" class="w-full text-white py-4 rounded-2xl font-black text-sm mt-8 shadow-xl" style="background-color: ${state.theme.primary}">進行結算</button>` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderHistoryView(container) {
+            container.innerHTML = `
+                <div class="space-y-6 animate-in">
+                    ${state.settlements.map(s => `
+                        <div onclick='showReceipt(${JSON.stringify(s)})' class="bg-white p-8 rounded-[2.5rem] border relative overflow-hidden cursor-pointer">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <p class="text-xs font-black text-slate-400">${new Date(s.settledAt).toLocaleDateString()}</p>
+                                    <p class="font-black text-[#40514E] mt-1">${s.bookName}</p>
+                                </div>
+                                <p class="text-xl font-black text-[#40514E]">$${s.totalSpent.toLocaleString()}</p>
+                            </div>
+                            <div class="absolute -bottom-4 -right-4">
+                                ${getPostmarkSVG(s.settledAt)}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        // --- 輔助函數 ---
+        function selectBook(id) {
+            state.currentBookId = id;
+            state.view = 'active';
+            listenToDetails();
+            render();
+        }
+
+        function selectPayer(name) {
+            document.querySelectorAll('.payer-btn').forEach(btn => {
+                const isMatch = btn.dataset.payer === name;
+                btn.dataset.payerActive = isMatch;
+                btn.className = `payer-btn px-4 py-2 rounded-2xl text-xs font-bold border-2 ${isMatch ? 'text-white' : 'bg-white text-slate-400 border-slate-100'}`;
+                btn.style.backgroundColor = isMatch ? state.theme.primary : 'white';
+                btn.style.borderColor = isMatch ? state.theme.primary : '#f1f1f1';
+            });
+        }
+
+        async function addParticipant() {
+            const nextName = `成員${state.participants.length + 1}`;
+            state.participants.push(nextName);
+            await db.collection('artifacts').doc(appId).collection('users').doc(state.accountKey).collection('books').doc(state.currentBookId).update({
+                participants: state.participants
+            });
+            render();
+        }
+
+        function switchView(v) {
+            state.view = v;
+            render();
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.innerText = msg;
+            t.classList.remove('hidden');
+            setTimeout(() => t.classList.add('hidden'), 2000);
+        }
+
+        function openSyncModal() { document.getElementById('sync-modal').classList.replace('hidden', 'flex'); }
+        function closeSyncModal() { document.getElementById('sync-modal').classList.replace('flex', 'hidden'); }
+        
+        function copyAccountKey() {
+            const el = document.createElement('textarea');
+            el.value = state.accountKey;
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+            showToast("已複製 ID");
+        }
+
+        function loadSyncKey() {
+            const key = document.getElementById('input-sync-key').value;
+            if (key) {
+                state.accountKey = key;
+                localStorage.setItem('expense_account_key', key);
+                location.reload();
+            }
+        }
+
+        function showReceipt(data) {
+            const container = document.getElementById('receipt-container');
+            const d = new Date(data.settledAt);
+            const dateStr = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+            
+            container.innerHTML = `
+                <div class="bg-white rounded-3xl shadow-2xl relative p-8">
+                    <div class="absolute top-6 right-6">${getPostmarkSVG(data.settledAt, "opacity-100 w-20 h-20")}</div>
+                    <div class="space-y-1 mb-8">
+                        <h2 class="text-xl font-black text-[#40514E]">${data.bookName}</h2>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">結算清單</p>
+                    </div>
+                    <div class="bg-[#F1F1F1]/50 p-6 rounded-2xl mb-8 space-y-4">
+                        <div class="flex justify-between items-end">
+                            <span class="text-[10px] font-black text-slate-400 uppercase">總支出</span>
+                            <span class="text-2xl font-black text-[#40514E]">$${data.totalSpent.toLocaleString()}</span>
+                        </div>
+                    </div>
+                    <div class="space-y-6">
+                        ${Object.entries(data.balances).map(([name, bal]) => `
+                            <div class="flex justify-between items-center">
+                                <span class="text-sm font-bold text-slate-600">${name}</span>
+                                <span class="text-sm font-black ${bal >= 0 ? 'text-[#8E9775]' : 'text-[#E28E8E]'}">
+                                    ${bal >= 0 ? '收' : '付'} $${Math.abs(bal).toLocaleString()}
+                                </span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                <button onclick="closeReceipt()" class="w-full bg-white py-4 rounded-2xl font-black shadow-lg">關閉</button>
+            `;
+            document.getElementById('receipt-modal').classList.replace('hidden', 'flex');
+        }
+
+        function closeReceipt() { document.getElementById('receipt-modal').classList.replace('flex', 'hidden'); }
+
+        function getPostmarkSVG(date, className = "opacity-30 w-24 h-24") {
+            const d = new Date(date);
+            const dateStr = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+            return `
+                <div class="relative ${className} flex items-center justify-center rotate-12 select-none pointer-events-none">
+                    <svg viewBox="0 0 100 100" class="w-full h-full fill-none stroke-current text-[#40514E]">
+                        <circle cx="50" cy="50" r="46" stroke-width="0.5" stroke-dasharray="1 1"></circle>
+                        <circle cx="50" cy="50" r="42" stroke-width="1.5"></circle>
+                        <line x1="20" y1="40" x2="80" y2="40" stroke-width="1"></line>
+                        <text x="50" y="54" text-anchor="middle" class="text-[11px] font-black fill-current stroke-none" style="font-family: Arial;">${dateStr}</text>
+                        <line x1="20" y1="60" x2="80" y2="60" stroke-width="1"></line>
+                        <text x="50" y="72" text-anchor="middle" class="text-[6px] font-bold fill-current stroke-none uppercase tracking-widest" style="font-family: Arial;">Paid Clear</text>
+                    </svg>
+                </div>
+            `;
+        }
     </script>
 </body>
 </html>
