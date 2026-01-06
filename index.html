@@ -11,18 +11,15 @@
     <!-- html2canvas -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
-    <!-- React & Babel -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for transforming JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Lucide Icons (Global) -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-
-    <!-- Import Map for Firebase & Lucide React wrapper -->
+    <!-- Import Map for React, Firebase & Lucide -->
     <script type="importmap">
     {
       "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
         "firebase/app": "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js",
         "firebase/auth": "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js",
         "firebase/firestore": "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js",
@@ -63,7 +60,7 @@
             updateDoc 
         } from 'firebase/firestore';
         
-        // 由於在瀏覽器環境直接使用 Lucide，我們使用 Lucide React 的 ESM 版本
+        // Lucide React Icons
         import { 
             Plus, Trash2, CheckCircle2, ChevronRight, Archive, 
             Globe, FolderKanban, Users, UserPlus, X, Settings2, 
@@ -71,7 +68,7 @@
             LogOut, RefreshCw, Copy, Check
         } from 'lucide-react';
 
-        // --- Firebase 設定 (使用你提供的資料) ---
+        // --- Firebase 設定 ---
         const firebaseConfig = {
             apiKey: "AIzaSyCf3gdvdTMm5BFXjho7_xdQjE0eH4JSAzM",
             authDomain: "keep-40f68.firebaseapp.com",
@@ -85,7 +82,6 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        // 使用固定的 appId 區隔不同應用，這裡設為 'expense-splitter-v2'
         const appId = 'expense-splitter-v2';
 
         const colorPalettes = [
@@ -99,7 +95,7 @@
         function App() {
             // --- 核心狀態 ---
             const [authUser, setAuthUser] = useState(null); // Firebase 實際登入的匿名用戶
-            const [activeUid, setActiveUid] = useState(null); // 當前使用的「資料帳號 ID」(可以是自己的，也可以是同步別人的)
+            const [activeUid, setActiveUid] = useState(null); // 當前使用的「資料帳號 ID」
             const [loading, setLoading] = useState(true);
             const [books, setBooks] = useState([]);
             const [currentBookId, setCurrentBookId] = useState(null);
@@ -213,10 +209,6 @@
                     }
                 }, (error) => {
                     console.error("Firestore Error:", error);
-                    // 權限錯誤通常代表同步了一個不存在或無權限的 ID，但在這個 demo 結構下，
-                    // 通常是因為 activeUid 改變導致的短暫狀態，或規則未允許讀取他人資料。
-                    // 為了此 Demo 順暢，我們假設 Firestore 規則是 open 或基於 path 的。
-                    // 如果遇到權限問題，通常需要調整 Firestore Rules。
                 });
                 return () => unsub();
             }, [activeUid, currentBookId]);
