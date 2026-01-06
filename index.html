@@ -10,12 +10,15 @@
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Firebase SDKs -->
+    
+    <!-- Firebase SDKs (Compat versions) -->
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    
     <!-- html2canvas for receipt saving -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
         body { font-family: 'Noto Sans TC', sans-serif; background-color: #F5F5F5; }
@@ -40,28 +43,33 @@
             appId: "1:419621970498:web:9370a95618f4f8170103db"
         };
 
-        // 初始化 Firebase (使用 Compat 模式以方便在 HTML 腳本中呼叫)
-        firebase.initializeApp(firebaseConfig);
+        // 初始化 Firebase
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
         const auth = firebase.auth();
         const db = firebase.firestore();
-        const appId = "expense-splitter-app";
+        
+        // --- 核心規範：定義正確的路徑結構 ---
+        // 必須遵守 /artifacts/{appId}/users/{userId}/{collectionName}
+        const APP_ID = "expense-splitter-app";
 
-        // --- 圖示組件 (SVG 實作) ---
+        // --- 圖示組件 ---
         const Icon = ({ name, size = 20, className = "" }) => {
             const icons = {
                 plus: <path d="M5 12h14m-7-7v14" />,
                 trash: <path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />,
-                check: <circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>,
+                check: <React.Fragment><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></React.Fragment>,
                 right: <path d="m9 18 6-6-6-6" />,
                 folder: <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />,
-                userPlus: <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/>,
+                userPlus: <React.Fragment><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></React.Fragment>,
                 x: <path d="M18 6 6 18M6 6l12 12" />,
-                camera: <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>,
-                alert: <circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>,
-                loader: <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" />,
+                camera: <React.Fragment><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></React.Fragment>,
+                alert: <React.Fragment><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></React.Fragment>,
+                loader: <React.Fragment><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></React.Fragment>,
                 down: <path d="m6 9 6 6 6-6" />,
                 up: <path d="m18 15-6-6-6 6" />,
-                settings: <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>
+                settings: <React.Fragment><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></React.Fragment>
             };
             return (
                 <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -89,68 +97,88 @@
             const [settlements, setSettlements] = useState([]);
             const [participants, setParticipants] = useState(['我', '朋友']);
             const [exchangeRate] = useState(0.22); 
-            const [currencyName] = useState('JPY');
-            const [isForeignMode, setIsForeignMode] = useState(false);
             const [themeColor, setThemeColor] = useState(colorPalettes[0]);
             const [quickInput, setQuickInput] = useState({ name: '', amount: '', currency: 'TWD', payer: '我' });
             const [view, setView] = useState('active'); 
             const [isSettling, setIsSettling] = useState(false);
-            const [errorMessage, setErrorMessage] = useState('');
-            const [isParticipantsExpanded, setIsParticipantsExpanded] = useState(true);
             const [showReceipt, setShowReceipt] = useState(false);
             const [lastSettlementData, setLastSettlementData] = useState(null);
             const receiptRef = useRef(null);
 
-            // 1. 初始化驗證
+            // 1. 初始化驗證 (必須最優先執行)
             useEffect(() => {
-                const unsubscribe = auth.onAuthStateChanged(async (u) => {
-                    if (!u) {
-                        try { await auth.signInAnonymously(); } catch (e) { setErrorMessage("驗證失敗"); }
-                    } else {
-                        setUser(u);
-                        setLoading(false);
+                const initAuth = async () => {
+                    try {
+                        // 如果有自定義 Token 使用之，否則使用匿名登入
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await auth.signInWithCustomToken(__initial_auth_token);
+                        } else {
+                            await auth.signInAnonymously();
+                        }
+                    } catch (e) {
+                        console.error("Auth failed:", e);
                     }
+                };
+                initAuth();
+                const unsubscribe = auth.onAuthStateChanged((u) => {
+                    setUser(u);
+                    setLoading(false);
                 });
                 return () => unsubscribe();
             }, []);
 
-            // 2. 監聽帳本列表
+            // 2. 監聽帳本列表 (受 user 保護)
             useEffect(() => {
                 if (!user) return;
-                const unsub = db.collection('projects').doc(appId).collection('users').doc(user.uid).collection('books')
-                    .onSnapshot(snap => {
-                        const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        setBooks(data);
-                        if (!currentBookId && data.length > 0) setCurrentBookId(data[0].id);
-                    }, () => setErrorMessage("讀取帳本失敗"));
+                
+                // 正確路徑：/artifacts/{appId}/users/{userId}/books
+                const booksRef = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books');
+                
+                const unsub = booksRef.onSnapshot(snap => {
+                    const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setBooks(data);
+                    // 預設選擇第一個帳本
+                    if (!currentBookId && data.length > 0) {
+                        setCurrentBookId(data[0].id);
+                    }
+                }, err => console.error("Books snapshot error:", err));
+                
                 return () => unsub();
-            }, [user, currentBookId]);
+            }, [user]);
 
-            // 3. 監聽細項
+            // 3. 監聽當前帳本內容 (受 user & currentBookId 保護)
             useEffect(() => {
                 if (!user || !currentBookId) return;
+                
                 const book = books.find(b => b.id === currentBookId);
-                if (book) setParticipants(book.participants || ['我', '朋友']);
+                if (book && book.participants) {
+                    setParticipants(book.participants);
+                }
 
-                const unsubExp = db.collection('projects').doc(appId).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses')
-                    .onSnapshot(snap => {
-                        const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        setItems(data.filter(i => i.status !== 'settled').sort((a,b) => b.timestamp - a.timestamp));
-                    });
+                const baseRef = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId);
+                
+                // 支出明細
+                const unsubExp = baseRef.collection('expenses').onSnapshot(snap => {
+                    const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setItems(data.filter(i => i.status !== 'settled').sort((a,b) => b.timestamp - a.timestamp));
+                }, err => console.error("Expenses snapshot error:", err));
 
-                const unsubSet = db.collection('projects').doc(appId).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('settlements')
-                    .onSnapshot(snap => {
-                        const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        setSettlements(data.sort((a,b) => b.settledAt - a.settledAt));
-                    });
+                // 結算紀錄
+                const unsubSet = baseRef.collection('settlements').onSnapshot(snap => {
+                    const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setSettlements(data.sort((a,b) => b.settledAt - a.settledAt));
+                }, err => console.error("Settlements snapshot error:", err));
 
                 return () => { unsubExp(); unsubSet(); };
-            }, [user, currentBookId, books]);
+            }, [user, currentBookId]);
 
             const handleAddBook = async () => {
                 if (!newBookName.trim() || !user) return;
-                const docRef = await db.collection('projects').doc(appId).collection('users').doc(user.uid).collection('books').add({
-                    name: newBookName, participants: ['我', '朋友'], createdAt: Date.now()
+                const booksRef = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books');
+                const docRef = await booksRef.add({
+                    name: newBookName, 
+                    participants: ['我', '朋友'], 
+                    createdAt: Date.now()
                 });
                 setNewBookName('');
                 setIsAddingBook(false);
@@ -161,16 +189,22 @@
             const updateParticipants = async (newList) => {
                 if (!user || !currentBookId) return;
                 setParticipants(newList);
-                await db.collection('projects').doc(appId).collection('users').doc(user.uid).collection('books').doc(currentBookId).update({ participants: newList });
+                await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).update({ participants: newList });
             };
 
             const handleQuickAdd = async () => {
-                if (!quickInput.name || !quickInput.amount) return;
+                if (!quickInput.name || !quickInput.amount || !user || !currentBookId) return;
                 const amt = parseFloat(quickInput.amount);
                 const isForeign = quickInput.currency !== 'TWD';
                 const finalAmt = isForeign ? amt * exchangeRate : amt;
-                await db.collection('projects').doc(appId).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses').add({
-                    name: quickInput.name, amount: finalAmt, payer: quickInput.payer, status: 'active', timestamp: Date.now()
+                
+                const expRef = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses');
+                await expRef.add({
+                    name: quickInput.name, 
+                    amount: finalAmt, 
+                    payer: quickInput.payer, 
+                    status: 'active', 
+                    timestamp: Date.now()
                 });
                 setQuickInput(prev => ({ ...prev, name: '', amount: '' }));
             };
@@ -187,18 +221,29 @@
             };
 
             const handleSettlement = async () => {
-                if (items.length === 0) return;
+                if (items.length === 0 || !user || !currentBookId) return;
                 setIsSettling(true);
                 const stats = calculateBalances();
-                const settlementData = { items, ...stats, settledAt: Date.now(), bookName: books.find(b => b.id === currentBookId)?.name || '未命名' };
-                await db.collection('projects').doc(appId).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('settlements').add(settlementData);
+                const settlementData = { 
+                    items, 
+                    ...stats, 
+                    settledAt: Date.now(), 
+                    bookName: books.find(b => b.id === currentBookId)?.name || '未命名' 
+                };
                 
+                const baseRef = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId);
+                
+                // 1. 新增結算單
+                await baseRef.collection('settlements').add(settlementData);
+                
+                // 2. 批量更新支出狀態為已結算
                 const batch = db.batch();
                 items.forEach(item => {
-                    const ref = db.collection('projects').doc(appId).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses').doc(item.id);
+                    const ref = baseRef.collection('expenses').doc(item.id);
                     batch.update(ref, { status: 'settled' });
                 });
                 await batch.commit();
+                
                 setLastSettlementData(settlementData);
                 setShowReceipt(true);
                 setIsSettling(false);
@@ -214,38 +259,24 @@
 
             const { totalSpent, balances } = calculateBalances();
 
-            if (loading) return (
-                <div className="flex h-screen flex-col items-center justify-center bg-slate-50 gap-4">
-                    <Icon name="loader" className="animate-spin text-slate-400" size={32} />
-                    <span className="text-xs font-bold text-slate-400 tracking-widest">正在連接雲端資料庫...</span>
-                </div>
-            );
+            if (loading) return <div className="flex h-screen items-center justify-center font-bold text-slate-400">系統初始化中...</div>;
 
             return (
                 <div className="min-h-screen bg-[#F5F5F5] text-[#576F72] flex flex-col items-center">
-                    {errorMessage && (
-                        <div className="fixed top-4 z-[200] bg-orange-500 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 max-w-sm">
-                            <Icon name="alert" size={24} /> 
-                            <div className="text-sm font-bold">{errorMessage}</div>
-                            <button onClick={() => setErrorMessage('')}><Icon name="x" size={18} /></button>
-                        </div>
-                    )}
-
                     {showReceipt && lastSettlementData && (
                         <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                             <div className="w-full max-w-sm">
-                                <div ref={receiptRef} className="bg-white rounded-3xl p-8 shadow-2xl relative overflow-hidden">
-                                    <h2 className="text-xl font-black text-[#40514E] mb-1">{lastSettlementData.bookName}</h2>
-                                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-6">結算明細</p>
+                                <div ref={receiptRef} className="bg-white rounded-3xl p-8 shadow-2xl">
+                                    <h2 className="text-xl font-black mb-6">{lastSettlementData.bookName} 結算單</h2>
                                     <div className="bg-slate-50 p-5 rounded-2xl mb-6 flex justify-between items-end">
                                         <span className="text-xs font-bold text-slate-400">總支出</span>
-                                        <span className="text-2xl font-black text-[#40514E]">${lastSettlementData.totalSpent.toLocaleString()}</span>
+                                        <span className="text-2xl font-black">${lastSettlementData.totalSpent.toLocaleString()}</span>
                                     </div>
                                     <div className="space-y-4">
                                         {Object.entries(lastSettlementData.balances).map(([name, bal]) => (
-                                            <div key={name} className="flex justify-between items-center text-sm">
-                                                <span className="font-bold">{name}</span>
-                                                <span className={`font-black ${bal >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                            <div key={name} className="flex justify-between items-center text-sm font-bold">
+                                                <span>{name}</span>
+                                                <span className={bal >= 0 ? 'text-green-600' : 'text-red-500'}>
                                                     {bal >= 0 ? '收' : '付'} ${Math.abs(bal).toLocaleString()}
                                                 </span>
                                             </div>
@@ -253,43 +284,37 @@
                                     </div>
                                 </div>
                                 <div className="flex gap-3 mt-4">
-                                    <button onClick={saveReceiptAsImage} className="flex-1 bg-white py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 shadow-xl">
-                                        <Icon name="camera" size={18} /> 儲存圖片
-                                    </button>
-                                    <button onClick={() => setShowReceipt(false)} className="bg-white/20 text-white w-14 rounded-2xl flex items-center justify-center">
-                                        <Icon name="x" size={20} />
-                                    </button>
+                                    <button onClick={saveReceiptAsImage} className="flex-1 bg-white py-4 rounded-2xl font-black text-sm shadow-xl hover:bg-slate-50">儲存圖片</button>
+                                    <button onClick={() => setShowReceipt(false)} className="bg-white/20 text-white w-14 rounded-2xl flex items-center justify-center"><Icon name="x" /></button>
                                 </div>
                             </div>
                         </div>
                     )}
 
                     <header className="w-full bg-white border-b sticky top-0 z-30 px-6 py-4 flex justify-between items-center max-w-5xl">
-                        <div className="flex items-center gap-2">
+                        <button onClick={() => setView('books')} className="text-sm font-black flex items-center gap-2">
                             <Icon name="folder" style={{ color: themeColor.primary }} />
-                            <button onClick={() => setView('books')} className="text-sm font-black flex items-center">
-                                {books.find(b => b.id === currentBookId)?.name || '選擇帳本'}
-                                <Icon name="right" size={14} className="ml-1 opacity-40" />
-                            </button>
-                        </div>
+                            {books.find(b => b.id === currentBookId)?.name || '選擇帳本'}
+                            <Icon name="right" size={14} className="opacity-40" />
+                        </button>
                         <div className="flex bg-slate-100 p-1 rounded-xl">
                             <button onClick={() => setView('active')} className={`px-4 py-1.5 text-xs font-bold rounded-lg ${view === 'active' ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={view === 'active' ? { color: themeColor.primary } : {}}>現行</button>
                             <button onClick={() => setView('history')} className={`px-4 py-1.5 text-xs font-bold rounded-lg ${view === 'history' ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={view === 'history' ? { color: themeColor.primary } : {}}>歷史</button>
                         </div>
                     </header>
 
-                    <main className="w-full max-w-5xl p-6 md:p-10">
+                    <main className="w-full max-w-5xl p-6">
                         {view === 'books' ? (
                             <div className="space-y-6">
                                 <div className="flex justify-between items-center">
                                     <h2 className="font-black text-xl">我的帳本庫</h2>
-                                    <button onClick={() => setIsAddingBook(true)} style={{ backgroundColor: themeColor.primary }} className="text-white p-3 rounded-full shadow-lg active:scale-90 transition-transform"><Icon name="plus" size={24} /></button>
+                                    <button onClick={() => setIsAddingBook(true)} style={{ backgroundColor: themeColor.primary }} className="text-white p-3 rounded-full shadow-lg"><Icon name="plus" size={24} /></button>
                                 </div>
                                 {isAddingBook && (
-                                    <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-4 animate-in fade-in zoom-in duration-300">
-                                        <input autoFocus placeholder="帳本名稱..." value={newBookName} onChange={(e) => setNewBookName(e.target.value)} className="w-full bg-slate-50 p-4 rounded-2xl text-sm font-bold outline-none ring-2 ring-transparent focus:ring-slate-200 transition-all" />
+                                    <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-4 animate-in fade-in slide-in-from-top-4">
+                                        <input autoFocus placeholder="帳本名稱..." value={newBookName} onChange={(e) => setNewBookName(e.target.value)} className="w-full bg-slate-50 p-4 rounded-2xl text-sm font-bold outline-none border-2 border-transparent focus:border-slate-200 transition-all" />
                                         <div className="flex gap-2">
-                                            <button onClick={handleAddBook} style={{ backgroundColor: themeColor.primary }} className="flex-1 text-white py-4 rounded-2xl text-sm font-bold">建立帳本</button>
+                                            <button onClick={handleAddBook} style={{ backgroundColor: themeColor.primary }} className="flex-1 text-white py-4 rounded-2xl text-sm font-bold hover:opacity-90 transition-opacity">建立帳本</button>
                                             <button onClick={() => setIsAddingBook(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl text-sm font-bold text-slate-500">取消</button>
                                         </div>
                                     </div>
@@ -297,8 +322,8 @@
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     {books.map(book => (
                                         <button key={book.id} onClick={() => { setCurrentBookId(book.id); setView('active'); }} className={`bg-white p-8 rounded-[2rem] text-left border-2 transition-all hover:shadow-xl ${currentBookId === book.id ? 'border-slate-800' : 'border-transparent'}`}>
-                                            <span className="font-black block text-xl mb-2">{book.name}</span>
-                                            <span className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em]">{book.participants?.length || 0} 名成員</span>
+                                            <span className="font-black block text-xl mb-1">{book.name}</span>
+                                            <span className="text-[10px] text-slate-400 font-black tracking-widest uppercase">{book.participants?.length || 0} 名成員</span>
                                         </button>
                                     ))}
                                 </div>
@@ -306,122 +331,105 @@
                         ) : view === 'active' ? (
                             <div className="grid md:grid-cols-2 gap-8 items-start">
                                 <div className="space-y-6">
-                                    <div className="bg-white rounded-3xl shadow-sm border overflow-hidden">
-                                        <div onClick={() => setIsParticipantsExpanded(!isParticipantsExpanded)} className="px-6 py-4 flex justify-between items-center cursor-pointer hover:bg-slate-50">
-                                            <div className="flex items-center gap-2">
-                                                <h3 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">成員清單</h3>
-                                                <span className="bg-slate-100 text-[10px] font-black px-2 py-0.5 rounded-full">{participants.length}</span>
-                                            </div>
-                                            <Icon name={isParticipantsExpanded ? "up" : "down"} size={16} />
+                                    <div className="bg-white rounded-3xl shadow-sm border p-6 space-y-4">
+                                        <p className="text-[10px] font-black text-slate-400 tracking-widest uppercase">成員設定</p>
+                                        <div className="flex flex-wrap gap-2">
+                                            {participants.map((p, idx) => (
+                                                <div key={idx} className="relative">
+                                                    <input value={p} onChange={(e) => { const newList = [...participants]; newList[idx] = e.target.value; updateParticipants(newList); }} className="bg-slate-50 px-4 py-2 rounded-xl text-xs font-bold w-24 text-center focus:bg-white focus:ring-2 focus:ring-slate-200 outline-none transition-all" />
+                                                </div>
+                                            ))}
+                                            <button onClick={() => updateParticipants([...participants, `成員${participants.length + 1}`])} className="px-4 py-2 border-2 border-dashed border-slate-200 rounded-xl text-slate-300 hover:border-slate-400 hover:text-slate-400 transition-all"><Icon name="userPlus" size={16} /></button>
                                         </div>
-                                        {isParticipantsExpanded && (
-                                            <div className="p-6 pt-0 space-y-4">
-                                                <div className="flex flex-wrap gap-2">
-                                                    {participants.map((p, idx) => (
-                                                        <div key={idx} className="group relative">
-                                                            <input value={p} onChange={(e) => { const newList = [...participants]; newList[idx] = e.target.value; updateParticipants(newList); }} className="bg-slate-50 px-4 py-2 rounded-xl text-xs font-bold border-none w-24 text-center focus:bg-white focus:ring-1 focus:ring-slate-200 outline-none" />
-                                                            {participants.length > 2 && <button onClick={() => updateParticipants(participants.filter((_, i) => i !== idx))} className="absolute -top-1 -right-1 bg-red-400 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100"><Icon name="x" size={10} /></button>}
-                                                        </div>
-                                                    ))}
-                                                    <button onClick={() => updateParticipants([...participants, `成員${participants.length + 1}`])} className="px-4 py-2 border-2 border-dashed border-slate-200 rounded-xl text-slate-300 hover:text-slate-400"><Icon name="userPlus" size={16} /></button>
-                                                </div>
-                                                <div className="pt-4 border-t flex justify-between items-center">
-                                                    <div className="flex gap-2">
-                                                        {colorPalettes.map(cp => (
-                                                            <button key={cp.name} onClick={() => setThemeColor(cp)} className={`w-5 h-5 rounded-full transition-transform ${themeColor.name === cp.name ? 'scale-125 ring-2 ring-offset-2 ring-slate-300' : ''}`} style={{ backgroundColor: cp.primary }} />
-                                                        ))}
-                                                    </div>
-                                                    <button onClick={() => setIsForeignMode(!isForeignMode)} className={`text-[10px] font-black px-3 py-1.5 rounded-lg transition-colors ${isForeignMode ? 'bg-slate-800 text-white' : 'bg-slate-50 text-slate-400'}`}>{isForeignMode ? '關閉外幣' : '開啟外幣'}</button>
-                                                </div>
-                                            </div>
-                                        )}
                                     </div>
 
                                     <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border space-y-6">
-                                        <div className="grid grid-cols-12 gap-3">
-                                            <input placeholder="品項名稱" value={quickInput.name} onChange={(e) => setQuickInput({...quickInput, name: e.target.value})} className="col-span-12 bg-slate-50 p-4 rounded-2xl text-sm font-bold border-none outline-none focus:bg-slate-100" />
-                                            <input type="number" placeholder="金額" value={quickInput.amount} onChange={(e) => setQuickInput({...quickInput, amount: e.target.value})} className="col-span-8 bg-slate-50 p-4 rounded-2xl text-sm font-bold border-none outline-none focus:bg-slate-100" />
-                                            <select value={quickInput.currency} onChange={(e) => setQuickInput({...quickInput, currency: e.target.value})} className="col-span-4 bg-slate-50 p-4 rounded-2xl text-xs font-black border-none outline-none">
+                                        <input placeholder="品項名稱 (例如：晚餐)" value={quickInput.name} onChange={(e) => setQuickInput({...quickInput, name: e.target.value})} className="w-full bg-slate-50 p-4 rounded-2xl text-sm font-bold outline-none focus:bg-white focus:ring-2 focus:ring-slate-100 transition-all" />
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <input type="number" placeholder="金額" value={quickInput.amount} onChange={(e) => setQuickInput({...quickInput, amount: e.target.value})} className="bg-slate-50 p-4 rounded-2xl text-sm font-bold outline-none focus:bg-white focus:ring-2 focus:ring-slate-100 transition-all" />
+                                            <select value={quickInput.currency} onChange={(e) => setQuickInput({...quickInput, currency: e.target.value})} className="bg-slate-50 p-4 rounded-2xl text-xs font-black outline-none cursor-pointer">
                                                 <option value="TWD">TWD</option>
-                                                {isForeignMode && <option value={currencyName}>{currencyName}</option>}
+                                                <option value="JPY">JPY (匯率 0.22)</option>
                                             </select>
                                         </div>
-                                        <div className="space-y-3">
-                                            <p className="text-[10px] font-black text-slate-300 uppercase ml-1">誰付的錢？</p>
-                                            <div className="flex flex-wrap gap-2">
-                                                {participants.map(p => (
-                                                    <button key={p} onClick={() => setQuickInput({...quickInput, payer: p})} className={`px-4 py-2 rounded-xl text-xs font-bold border-2 transition-all ${quickInput.payer === p ? 'text-white' : 'bg-white text-slate-400 border-slate-100'}`} style={quickInput.payer === p ? { backgroundColor: themeColor.primary, borderColor: themeColor.primary } : {}}>{p}</button>
-                                                ))}
-                                            </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            {participants.map(p => (
+                                                <button key={p} onClick={() => setQuickInput({...quickInput, payer: p})} className={`px-4 py-2 rounded-xl text-xs font-bold border-2 transition-all ${quickInput.payer === p ? 'text-white' : 'bg-white text-slate-400 border-slate-100'}`} style={quickInput.payer === p ? { backgroundColor: themeColor.primary, borderColor: themeColor.primary } : {}}>{p}</button>
+                                            ))}
                                         </div>
-                                        <button onClick={handleQuickAdd} className="w-full text-white py-4 rounded-2xl font-black text-sm active:scale-95 shadow-lg" style={{ backgroundColor: '#40514E' }}>記錄這筆支出</button>
+                                        <button onClick={handleQuickAdd} className="w-full text-white py-4 rounded-2xl font-black text-sm shadow-lg hover:opacity-90 active:scale-95 transition-all" style={{ backgroundColor: '#40514E' }}>記錄支出</button>
                                     </div>
 
                                     {items.length > 0 && (
-                                        <button onClick={handleSettlement} disabled={isSettling} className="w-full text-white font-black py-5 rounded-[2rem] shadow-xl flex items-center justify-center gap-3 active:scale-95 transition-all" style={{ backgroundColor: themeColor.primary }}>
-                                            {isSettling ? <Icon name="loader" className="animate-spin" /> : <Icon name="check" size={24} />} 立即結算並產單
+                                        <button onClick={handleSettlement} disabled={isSettling} className="w-full text-white font-black py-5 rounded-[2rem] shadow-xl flex items-center justify-center gap-3 hover:opacity-90 transition-all" style={{ backgroundColor: themeColor.primary }}>
+                                            {isSettling ? <Icon name="loader" className="animate-spin" /> : <Icon name="check" />} 
+                                            {isSettling ? "結算中..." : "立即結算產單"}
                                         </button>
                                     )}
                                 </div>
 
-                                <div className="space-y-6">
-                                    <div className="bg-[#40514E] rounded-[2.5rem] shadow-2xl overflow-hidden text-white">
-                                        <div className="p-10">
-                                            <p className="text-[10px] font-black uppercase tracking-widest mb-2 opacity-60">目前總花費</p>
-                                            <h2 className="text-4xl font-black">${totalSpent.toLocaleString()}</h2>
-                                            <div className="mt-8 space-y-3">
-                                                {participants.map(p => (
-                                                    <div key={p} className="flex justify-between items-center bg-white/5 p-4 rounded-xl text-sm border border-white/10">
-                                                        <span className="font-bold opacity-80">{p}</span>
-                                                        <span className="font-black" style={{ color: (balances[p]||0) >= 0 ? themeColor.primary : themeColor.secondary }}>
-                                                            {(balances[p]||0) >= 0 ? '+' : '-'}${Math.abs(balances[p]||0).toLocaleString()}
-                                                        </span>
-                                                    </div>
-                                                ))}
+                                <div className="bg-[#40514E] rounded-[2.5rem] shadow-2xl overflow-hidden text-white p-10 space-y-8 sticky top-24">
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase opacity-60 mb-2 tracking-widest">目前帳本總計</p>
+                                        <h2 className="text-4xl font-black">${totalSpent.toLocaleString()}</h2>
+                                    </div>
+                                    <div className="space-y-3">
+                                        {participants.map(p => (
+                                            <div key={p} className="flex justify-between items-center bg-white/5 p-4 rounded-xl text-sm border border-white/10">
+                                                <span className="font-bold">{p}</span>
+                                                <span className="font-black" style={{ color: (balances[p]||0) >= 0 ? themeColor.primary : themeColor.secondary }}>
+                                                    {(balances[p]||0) >= 0 ? '+' : '-'}${Math.abs(balances[p]||0).toLocaleString()}
+                                                </span>
                                             </div>
-                                        </div>
-                                        <div className="bg-white p-8 rounded-t-[2.5rem] text-slate-600">
-                                            <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-300 mb-6">支出明細清單</h4>
-                                            <div className="space-y-5 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
-                                                {items.length === 0 ? <p className="text-xs text-center text-slate-300 py-10 font-bold">尚無支出紀錄</p> : items.map(item => (
-                                                    <div key={item.id} className="flex justify-between items-center group">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className="w-8 h-8 rounded-lg flex items-center justify-center font-black text-[10px]" style={{ backgroundColor: `${themeColor.primary}20`, color: themeColor.primary }}>{item.payer[0]}</div>
-                                                            <span className="text-sm font-bold text-slate-700">{item.name}</span>
-                                                        </div>
-                                                        <div className="flex items-center gap-4">
-                                                            <span className="font-black text-sm">${item.amount.toLocaleString()}</span>
-                                                            <button onClick={() => db.collection('projects').doc(appId).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses').doc(item.id).delete()} className="text-slate-200 hover:text-red-400 transition-colors"><Icon name="trash" size={16} /></button>
-                                                        </div>
+                                        ))}
+                                    </div>
+                                    <div className="pt-6 border-t border-white/10 space-y-4 max-h-[300px] overflow-y-auto custom-scrollbar">
+                                        <p className="text-[10px] font-black uppercase opacity-60 tracking-widest">支出明細</p>
+                                        {items.length === 0 ? (
+                                            <p className="text-xs opacity-30 text-center py-4">尚無支出紀錄</p>
+                                        ) : (
+                                            items.map(item => (
+                                                <div key={item.id} className="flex justify-between items-center text-sm group">
+                                                    <span className="opacity-70 font-bold">{item.payer} | {item.name}</span>
+                                                    <div className="flex items-center gap-3">
+                                                        <span className="font-black">${item.amount.toLocaleString()}</span>
+                                                        <button 
+                                                            onClick={async () => {
+                                                                if(!user || !currentBookId) return;
+                                                                await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('books').doc(currentBookId).collection('expenses').doc(item.id).delete();
+                                                            }}
+                                                            className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-all"
+                                                        >
+                                                            <Icon name="trash" size={14} />
+                                                        </button>
                                                     </div>
-                                                ))}
-                                            </div>
-                                        </div>
+                                                </div>
+                                            ))
+                                        )}
                                     </div>
                                 </div>
                             </div>
                         ) : (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 {settlements.length === 0 ? (
-                                    <div className="col-span-full py-20 text-center">
-                                        <Icon name="folder" size={48} className="mx-auto text-slate-200 mb-4" />
-                                        <p className="font-bold text-slate-300">目前沒有任何歷史結算紀錄</p>
+                                    <div className="col-span-full py-20 text-center space-y-4">
+                                        <div className="inline-block p-6 bg-white rounded-full"><Icon name="folder" size={48} className="opacity-20" /></div>
+                                        <p className="font-black text-slate-300">目前沒有歷史結算紀錄</p>
                                     </div>
-                                ) : settlements.map(s => (
-                                    <div key={s.id} onClick={() => { setLastSettlementData(s); setShowReceipt(true); }} className="bg-white p-8 rounded-[2.5rem] border hover:shadow-xl transition-all cursor-pointer group">
-                                        <div className="flex justify-between items-start mb-6">
-                                            <div>
-                                                <p className="text-xs font-black text-slate-400 mb-1">{new Date(s.settledAt).toLocaleDateString()}</p>
-                                                <h3 className="font-black text-slate-800">{s.bookName}</h3>
+                                ) : (
+                                    settlements.map(s => (
+                                        <div key={s.id} onClick={() => { setLastSettlementData(s); setShowReceipt(true); }} className="bg-white p-8 rounded-[2.5rem] border hover:shadow-xl transition-all cursor-pointer group">
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div>
+                                                    <p className="text-xs font-black text-slate-400 mb-1">{new Date(s.settledAt).toLocaleDateString()} {new Date(s.settledAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                                                    <h3 className="font-black text-lg">{s.bookName}</h3>
+                                                </div>
+                                                <Icon name="right" className="opacity-0 group-hover:opacity-100 transition-all" />
                                             </div>
                                             <p className="text-2xl font-black text-[#40514E]">${s.totalSpent.toLocaleString()}</p>
                                         </div>
-                                        <div className="flex justify-between items-center">
-                                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">檢視結算收據</span>
-                                            <Icon name="right" size={14} className="text-slate-300 group-hover:translate-x-1 transition-transform" />
-                                        </div>
-                                    </div>
-                                ))}
+                                    ))
+                                )}
                             </div>
                         )}
                     </main>
