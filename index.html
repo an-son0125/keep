@@ -4,27 +4,29 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>好友拆帳助手 - 雲端同步版</title>
+    <!-- 基礎依賴 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- React & ReactDOM -->
+    
+    <!-- React 核心 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <!-- Babel for JSX -->
+    
+    <!-- Babel 編譯器 (用於 JSX) -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Firebase SDK (使用 compat 版本確保在單一檔案中穩定運行) -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 </head>
 <body class="bg-[#F5F5F5] text-[#576F72]">
     <div id="root"></div>
 
-    <script type="module" babel>
-        const { useState, useEffect, useRef, useMemo } = React;
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
         
-        // --- Firebase Imports from CDN ---
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, getDoc, addDoc, query, onSnapshot, deleteDoc, writeBatch, updateDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
-
         // Firebase 配置
         const firebaseConfig = {
             apiKey: "AIzaSyCf3gdvdTMm5BFXjho7_xdQjE0eH4JSAzM",
@@ -36,9 +38,12 @@
             measurementId: "G-D6J8P9967X"
         };
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        // 初始化 Firebase
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.firestore();
         const appId = "expense-splitter-v2";
 
         const colorPalettes = [
@@ -60,116 +65,108 @@
             const [settlements, setSettlements] = useState([]);
             const [participants, setParticipants] = useState(['我', '朋友']);
             const [exchangeRate, setExchangeRate] = useState(0.22);
-            const [currencyName, setCurrencyName] = useState('JPY');
-            const [isForeignMode, setIsForeignMode] = useState(false);
             const [themeColor, setThemeColor] = useState(colorPalettes[0]);
-            const [showPalette, setShowPalette] = useState(false);
-            const [inputMode, setInputMode] = useState('single');
-            const [batchText, setBatchText] = useState('');
             const [quickInput, setQuickInput] = useState({ name: '', amount: '', currency: 'TWD', payer: '我' });
             const [view, setView] = useState('active');
-            const [isSettling, setIsSettling] = useState(false);
             const [errorMessage, setErrorMessage] = useState('');
             const [isParticipantsExpanded, setIsParticipantsExpanded] = useState(true);
             const [uidInput, setUidInput] = useState('');
             const [showUidModal, setShowUidModal] = useState(false);
-
             const [showReceipt, setShowReceipt] = useState(false);
             const [lastSettlementData, setLastSettlementData] = useState(null);
             const receiptRef = useRef(null);
 
-            // 初始化 Auth
+            // 1. 初始化 Auth
             useEffect(() => {
-                const unsubscribe = onAuthStateChanged(auth, (u) => {
+                const unsubscribe = auth.onAuthStateChanged(async (u) => {
                     if (u) {
                         setUser(u);
                         setUidInput(u.uid);
                     } else {
-                        signInAnonymously(auth).catch(() => setErrorMessage("匿名登入失敗"));
+                        try {
+                            await auth.signInAnonymously();
+                        } catch (e) {
+                            setErrorMessage("登入系統失敗，請重新整理");
+                        }
                     }
                     setLoading(false);
                 });
                 return () => unsubscribe();
             }, []);
 
-            // 監聽帳本列表
+            // 2. 監聽帳本列表
             useEffect(() => {
                 if (!user) return;
-                const q = collection(db, 'artifacts', appId, 'users', user.uid, 'books');
-                const unsubscribe = onSnapshot(q, (snapshot) => {
+                const path = `artifacts/${appId}/users/${user.uid}/books`;
+                const unsubscribe = db.collection(path).onSnapshot((snapshot) => {
                     const booksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setBooks(booksData);
                     if (!currentBookId && booksData.length > 0) {
                         setCurrentBookId(booksData[0].id);
                     }
-                }, (error) => {
-                    console.error("Fetch books error:", error);
-                });
+                }, (err) => console.error("Books error:", err));
                 return () => unsubscribe();
             }, [user]);
 
-            // 監聽特定帳本細節
+            // 3. 監聽帳本詳情與支出
             useEffect(() => {
                 if (!user || !currentBookId) return;
-                const bookRef = doc(db, 'artifacts', appId, 'users', user.uid, 'books', currentBookId);
+                const bookRef = db.doc(`artifacts/${appId}/users/${user.uid}/books/${currentBookId}`);
                 
-                const unsubBook = onSnapshot(bookRef, (docSnap) => {
-                    if (docSnap.exists()) {
+                const unsubBook = bookRef.onSnapshot((docSnap) => {
+                    if (docSnap.exists) {
                         setParticipants(docSnap.data().participants || ['我', '朋友']);
                     }
                 });
 
-                const qExpenses = collection(db, 'artifacts', appId, 'users', user.uid, 'books', currentBookId, 'expenses');
-                const unsubExp = onSnapshot(qExpenses, (snapshot) => {
-                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setItems(data.filter(i => i.status !== 'settled').sort((a, b) => b.timestamp - a.timestamp));
-                });
+                const unsubExp = bookRef.collection('expenses')
+                    .onSnapshot((snapshot) => {
+                        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setItems(data.filter(i => i.status !== 'settled').sort((a, b) => b.timestamp - a.timestamp));
+                    });
 
-                const qSettlements = collection(db, 'artifacts', appId, 'users', user.uid, 'books', currentBookId, 'settlements');
-                const unsubSet = onSnapshot(qSettlements, (snapshot) => {
-                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setSettlements(data.sort((a, b) => b.settledAt - a.settledAt));
-                });
+                const unsubSet = bookRef.collection('settlements')
+                    .onSnapshot((snapshot) => {
+                        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setSettlements(data.sort((a, b) => b.settledAt - a.settledAt));
+                    });
 
                 return () => { unsubBook(); unsubExp(); unsubSet(); };
             }, [user, currentBookId]);
 
+            // 圖標初始化
+            useEffect(() => {
+                if (window.lucide) window.lucide.createIcons();
+            }, [view, books, isAddingBook, showUidModal]);
+
             const handleAddBook = async () => {
                 if (!newBookName.trim() || !user) return;
                 try {
-                    const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'books'), {
+                    const res = await db.collection(`artifacts/${appId}/users/${user.uid}/books`).add({
                         name: newBookName, participants: ['我', '朋友'], createdAt: Date.now()
                     });
                     setNewBookName('');
                     setIsAddingBook(false);
-                    setCurrentBookId(docRef.id);
+                    setCurrentBookId(res.id);
                     setView('active');
-                } catch (e) { setErrorMessage("新增帳本失敗"); }
+                } catch (e) { setErrorMessage("無法新增帳本"); }
             };
 
-            const updateParticipants = async (newParticipants) => {
+            const updateParticipants = async (newList) => {
                 if (!user || !currentBookId) return;
-                setParticipants(newParticipants);
+                setParticipants(newList);
                 try {
-                    await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'books', currentBookId), { participants: newParticipants });
-                } catch (e) { setErrorMessage("更新成員失敗"); }
+                    await db.doc(`artifacts/${appId}/users/${user.uid}/books/${currentBookId}`).update({ participants: newList });
+                } catch (e) { console.error(e); }
             };
 
             const handleQuickAdd = async () => {
-                if (!quickInput.name || !quickInput.amount || !currentBookId) {
-                    setErrorMessage("請輸入完整資料並選擇帳本");
-                    return;
-                }
+                if (!quickInput.name || !quickInput.amount || !currentBookId) return;
                 const amount = parseFloat(quickInput.amount);
-                const isForeign = quickInput.currency !== 'TWD';
-                const finalAmountInTWD = isForeign ? amount * exchangeRate : amount;
-                
                 try {
-                    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'books', currentBookId, 'expenses'), {
+                    await db.collection(`artifacts/${appId}/users/${user.uid}/books/${currentBookId}/expenses`).add({
                         name: quickInput.name,
-                        rawAmount: isForeign ? amount : null,
-                        currency: isForeign ? quickInput.currency : 'TWD',
-                        amount: finalAmountInTWD,
+                        amount: amount,
                         payer: quickInput.payer,
                         status: 'active',
                         timestamp: Date.now()
@@ -178,12 +175,12 @@
                 } catch (e) { setErrorMessage("新增失敗"); }
             };
 
-            const calculateBalances = (dataItems = items) => {
-                const totalSpent = dataItems.reduce((sum, i) => sum + i.amount, 0);
+            const calculateBalances = () => {
+                const totalSpent = items.reduce((sum, i) => sum + i.amount, 0);
                 const average = totalSpent / (participants.length || 1);
                 const balances = {};
                 participants.forEach(p => {
-                    const paid = dataItems.filter(i => i.payer === p).reduce((sum, i) => sum + i.amount, 0);
+                    const paid = items.filter(i => i.payer === p).reduce((sum, i) => sum + i.amount, 0);
                     balances[p] = paid - average;
                 });
                 return { totalSpent, average, balances };
@@ -191,7 +188,6 @@
 
             const handleSettlement = async () => {
                 if (items.length === 0 || !user || !currentBookId) return;
-                setIsSettling(true);
                 const stats = calculateBalances();
                 const settlementData = {
                     items: [...items],
@@ -200,177 +196,182 @@
                     bookName: books.find(b => b.id === currentBookId)?.name || '未命名'
                 };
                 try {
-                    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'books', currentBookId, 'settlements'), settlementData);
-                    const batch = writeBatch(db);
+                    await db.collection(`artifacts/${appId}/users/${user.uid}/books/${currentBookId}/settlements`).add(settlementData);
+                    const batch = db.batch();
                     items.forEach(item => {
-                        batch.update(doc(db, 'artifacts', appId, 'users', user.uid, 'books', currentBookId, 'expenses', item.id), { status: 'settled' });
+                        const ref = db.doc(`artifacts/${appId}/users/${user.uid}/books/${currentBookId}/expenses/${item.id}`);
+                        batch.update(ref, { status: 'settled' });
                     });
                     await batch.commit();
                     setLastSettlementData(settlementData);
                     setShowReceipt(true);
                 } catch (e) { setErrorMessage("結算失敗"); }
-                finally { setIsSettling(false); }
-            };
-
-            const saveAsImage = async () => {
-                if (!receiptRef.current) return;
-                const canvas = await html2canvas(receiptRef.current);
-                const link = document.createElement('a');
-                link.download = `結算單_${Date.now()}.png`;
-                link.href = canvas.toDataURL();
-                link.click();
             };
 
             const handleLogout = async () => {
-                await signOut(auth);
+                await auth.signOut();
                 window.location.reload();
             };
 
-            const { totalSpent, average, balances } = calculateBalances();
+            const { totalSpent, balances } = calculateBalances();
 
-            if (loading) return <div className="h-screen flex items-center justify-center font-bold">載入中...</div>;
+            if (loading) return <div className="h-screen flex items-center justify-center font-bold text-slate-400">系統啟動中...</div>;
 
             return (
-                <div className="min-h-screen flex flex-col items-center">
-                    {/* UID 同步視窗 */}
+                <div className="min-h-screen flex flex-col items-center pb-20">
+                    {/* UID 同步模態視窗 */}
                     {showUidModal && (
-                        <div className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4">
-                            <div className="bg-white p-8 rounded-[2rem] w-full max-w-sm space-y-4">
-                                <h3 className="font-black text-lg text-center">雲端帳號同步</h3>
-                                <p className="text-xs text-slate-400">輸入 UID 以載入你在其他裝置的紀錄：</p>
-                                <input 
-                                    value={uidInput} 
-                                    onChange={(e) => setUidInput(e.target.value)}
-                                    className="w-full bg-slate-100 p-4 rounded-2xl text-xs font-mono"
-                                />
-                                <div className="flex gap-2">
-                                    <button onClick={() => setShowUidModal(false)} className="flex-1 py-3 font-bold text-slate-400">關閉</button>
-                                    <button onClick={() => { localStorage.setItem('saved_uid', uidInput); alert('已記錄，請妥善保管。'); setShowUidModal(false); }} style={{ backgroundColor: themeColor.primary }} className="flex-1 py-3 rounded-2xl text-white font-bold">保存 UID</button>
+                        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm">
+                            <div className="bg-white p-8 rounded-[2.5rem] w-full max-w-sm space-y-6 shadow-2xl">
+                                <div className="text-center space-y-2">
+                                    <h3 className="font-black text-xl">雲端帳號記憶</h3>
+                                    <p className="text-xs text-slate-400">保存 UID 可在不同裝置載入紀錄</p>
                                 </div>
-                                <button onClick={handleLogout} className="w-full text-red-400 text-xs font-bold pt-4 border-t">登出帳號</button>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-300 ml-1 uppercase">你的個人 UID</label>
+                                    <input 
+                                        value={uidInput} 
+                                        readOnly
+                                        className="w-full bg-slate-100 p-4 rounded-2xl text-[10px] font-mono text-slate-500 border-none focus:ring-0"
+                                    />
+                                </div>
+                                <div className="flex gap-3">
+                                    <button onClick={() => setShowUidModal(false)} className="flex-1 py-4 font-bold text-slate-400">取消</button>
+                                    <button 
+                                        onClick={() => { navigator.clipboard.writeText(uidInput); alert('UID 已複製！請保存好以便日後同步。'); }} 
+                                        style={{ backgroundColor: themeColor.primary }} 
+                                        className="flex-1 py-4 rounded-2xl text-white font-bold shadow-lg"
+                                    >
+                                        複製 UID
+                                    </button>
+                                </div>
+                                <button onClick={handleLogout} className="w-full text-red-400 text-xs font-bold pt-6 border-t border-slate-50">登出帳號並清除本地快取</button>
                             </div>
                         </div>
                     )}
 
-                    {/* 收據視窗 */}
-                    {showReceipt && lastSettlementData && (
-                        <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4 overflow-y-auto">
-                            <div className="w-full max-w-sm flex flex-col gap-4">
-                                <div ref={receiptRef} className="bg-white p-8 rounded-3xl space-y-6">
-                                    <h2 className="text-xl font-black">{lastSettlementData.bookName} 結算</h2>
-                                    <div className="bg-slate-50 p-4 rounded-2xl">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase">總支出</p>
-                                        <p className="text-2xl font-black">${lastSettlementData.totalSpent.toLocaleString()}</p>
-                                    </div>
-                                    <div className="space-y-3">
-                                        {Object.entries(lastSettlementData.balances).map(([n, b]) => (
-                                            <div key={n} className="flex justify-between text-sm font-bold">
-                                                <span>{n}</span>
-                                                <span style={{ color: b >= 0 ? themeColor.primary : themeColor.secondary }}>
-                                                    {b >= 0 ? '收' : '付'} ${Math.abs(b).toFixed(0)}
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div className="flex gap-2">
-                                    <button onClick={saveAsImage} className="flex-1 bg-white py-4 rounded-2xl font-black text-sm">儲存圖片</button>
-                                    <button onClick={() => setShowReceipt(false)} className="bg-white/20 text-white px-6 rounded-2xl">關閉</button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    <header className="w-full bg-white border-b sticky top-0 z-30 px-4 py-4 flex justify-center">
-                        <div className="w-full max-w-5xl flex justify-between items-center">
-                            <div className="flex items-center gap-2">
-                                <button onClick={() => setView('books')} className="text-sm font-black flex items-center gap-1">
-                                    <i data-lucide="folder" className="w-4 h-4"></i>
-                                    {books.find(b => b.id === currentBookId)?.name || '選擇帳本'}
-                                </button>
-                            </div>
+                    {/* 頂部導航 */}
+                    <header className="w-full bg-white/80 backdrop-blur-md border-b sticky top-0 z-30 px-4 py-4 flex justify-center">
+                        <div className="w-full max-w-xl flex justify-between items-center">
+                            <button onClick={() => setView('books')} className="flex items-center gap-2 px-4 py-2 bg-slate-50 rounded-2xl border border-slate-100 transition-active">
+                                <i data-lucide="layout-grid" className="w-4 h-4"></i>
+                                <span className="text-sm font-black truncate max-w-[120px]">
+                                    {books.find(b => b.id === currentBookId)?.name || '切換帳本'}
+                                </span>
+                            </button>
                             <div className="flex gap-2">
-                                <button onClick={() => setShowUidModal(true)} className="p-2 bg-slate-100 rounded-xl"><i data-lucide="user" className="w-4 h-4"></i></button>
-                                <div className="flex bg-slate-100 p-1 rounded-xl">
-                                    <button onClick={() => setView('active')} className={`px-4 py-1.5 text-xs font-bold rounded-lg ${view === 'active' ? 'bg-white shadow-sm' : 'text-slate-400'}`}>現行</button>
-                                    <button onClick={() => setView('history')} className={`px-4 py-1.5 text-xs font-bold rounded-lg ${view === 'history' ? 'bg-white shadow-sm' : 'text-slate-400'}`}>歷史</button>
+                                <button onClick={() => setShowUidModal(true)} className="p-3 bg-slate-100 rounded-2xl text-slate-500 hover:bg-slate-200"><i data-lucide="user" className="w-5 h-5"></i></button>
+                                <div className="flex bg-slate-100 p-1 rounded-2xl">
+                                    <button onClick={() => setView('active')} className={`px-5 py-2 text-xs font-bold rounded-xl transition-all ${view === 'active' ? 'bg-white shadow-sm scale-105' : 'text-slate-400'}`}>現行</button>
+                                    <button onClick={() => setView('history')} className={`px-5 py-2 text-xs font-bold rounded-xl transition-all ${view === 'history' ? 'bg-white shadow-sm scale-105' : 'text-slate-400'}`}>歷史</button>
                                 </div>
                             </div>
                         </div>
                     </header>
 
-                    <main className="w-full max-w-xl p-4 md:p-8 space-y-6 pb-32">
+                    <main className="w-full max-w-xl p-4 md:p-6 space-y-6">
                         {view === 'books' ? (
-                            <div className="space-y-4">
-                                <div className="flex justify-between items-center">
-                                    <h2 className="font-black text-lg">我的帳本庫</h2>
-                                    <button onClick={() => setIsAddingBook(true)} style={{ backgroundColor: themeColor.primary }} className="text-white p-2 rounded-full"><i data-lucide="plus"></i></button>
+                            <div className="space-y-6 animate-in slide-in-from-bottom-4">
+                                <div className="flex justify-between items-end px-2">
+                                    <div>
+                                        <h2 className="font-black text-2xl">帳本庫</h2>
+                                        <p className="text-xs text-slate-400">管理你的所有拆帳活動</p>
+                                    </div>
+                                    <button onClick={() => setIsAddingBook(true)} style={{ backgroundColor: themeColor.primary }} className="text-white p-4 rounded-2xl shadow-lg hover:scale-110 transition-transform"><i data-lucide="plus"></i></button>
                                 </div>
+                                
                                 {isAddingBook && (
-                                    <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-4">
-                                        <input autoFocus placeholder="帳本名稱..." value={newBookName} onChange={(e) => setNewBookName(e.target.value)} className="w-full bg-slate-100 p-4 rounded-2xl border-none" />
-                                        <button onClick={handleAddBook} style={{ backgroundColor: themeColor.primary }} className="w-full text-white py-3 rounded-2xl font-bold">建立</button>
+                                    <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-50 space-y-4 animate-in zoom-in-95">
+                                        <input autoFocus placeholder="輸入新帳本名稱..." value={newBookName} onChange={(e) => setNewBookName(e.target.value)} className="w-full bg-slate-50 p-5 rounded-2xl border-none focus:ring-2 ring-slate-100 font-bold" />
+                                        <div className="flex gap-2">
+                                            <button onClick={() => setIsAddingBook(false)} className="flex-1 py-4 font-bold text-slate-400">取消</button>
+                                            <button onClick={handleAddBook} style={{ backgroundColor: themeColor.primary }} className="flex-1 text-white py-4 rounded-2xl font-bold shadow-lg">建立帳本</button>
+                                        </div>
                                     </div>
                                 )}
+
                                 <div className="grid grid-cols-1 gap-4">
                                     {books.map(b => (
-                                        <button key={b.id} onClick={() => { setCurrentBookId(b.id); setView('active'); }} className={`p-6 rounded-3xl text-left border ${currentBookId === b.id ? 'border-2' : 'bg-white'}`} style={currentBookId === b.id ? { borderColor: themeColor.primary } : {}}>
-                                            <span className="font-black block">{b.name}</span>
-                                            <span className="text-[10px] text-slate-400 font-bold">{b.participants?.length || 0} 位成員</span>
+                                        <button key={b.id} onClick={() => { setCurrentBookId(b.id); setView('active'); }} className={`group p-6 rounded-[2rem] text-left border-2 transition-all ${currentBookId === b.id ? 'bg-white' : 'bg-slate-50 border-transparent opacity-70'}`} style={currentBookId === b.id ? { borderColor: themeColor.primary } : {}}>
+                                            <div className="flex justify-between items-center">
+                                                <div>
+                                                    <span className="font-black text-lg block mb-1">{b.name}</span>
+                                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{b.participants?.length || 0} MEMBERS</span>
+                                                </div>
+                                                <i data-lucide="chevron-right" className={`w-5 h-5 transition-transform ${currentBookId === b.id ? 'text-slate-300 group-hover:translate-x-1' : 'text-transparent'}`}></i>
+                                            </div>
                                         </button>
                                     ))}
+                                    {books.length === 0 && !isAddingBook && (
+                                        <div className="py-20 text-center space-y-4 opacity-30">
+                                            <i data-lucide="archive" className="w-12 h-12 mx-auto"></i>
+                                            <p className="font-bold">目前沒有帳本，點擊右上方新增</p>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         ) : view === 'active' ? (
-                            <div className="space-y-6">
-                                {/* 參與成員 - 可縮放 */}
-                                <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-4">
+                            <div className="space-y-6 animate-in fade-in">
+                                {/* 成員管理 - 可摺疊 */}
+                                <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 transition-all">
                                     <div className="flex justify-between items-center cursor-pointer" onClick={() => setIsParticipantsExpanded(!isParticipantsExpanded)}>
-                                        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">參與成員</h3>
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: themeColor.primary }}></div>
+                                            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">參與成員</h3>
+                                        </div>
                                         <i data-lucide={isParticipantsExpanded ? "chevron-up" : "chevron-down"} className="w-4 h-4 text-slate-300"></i>
                                     </div>
                                     {isParticipantsExpanded && (
-                                        <div className="flex flex-wrap gap-2 animate-in fade-in">
+                                        <div className="mt-6 flex flex-wrap gap-2 animate-in slide-in-from-top-2">
                                             {participants.map((p, idx) => (
                                                 <input key={idx} value={p} onChange={(e) => { 
                                                     const newList = [...participants]; 
                                                     newList[idx] = e.target.value; 
                                                     updateParticipants(newList); 
-                                                }} className="bg-slate-100 px-4 py-2 rounded-2xl text-xs font-bold w-24 text-center border-none" />
+                                                }} className="bg-slate-50 px-4 py-2.5 rounded-xl text-xs font-bold w-24 text-center border-none focus:ring-2 ring-slate-100" />
                                             ))}
-                                            <button onClick={() => updateParticipants([...participants, `成員${participants.length + 1}`])} className="px-4 py-2 border-2 border-dashed border-slate-200 rounded-2xl text-slate-300"><i data-lucide="user-plus" className="w-4 h-4"></i></button>
+                                            <button onClick={() => updateParticipants([...participants, `成員${participants.length + 1}`])} className="px-4 py-2.5 border-2 border-dashed border-slate-100 rounded-xl text-slate-300 hover:border-slate-200 transition-colors"><i data-lucide="user-plus" className="w-4 h-4"></i></button>
                                         </div>
                                     )}
                                 </div>
 
-                                {/* 輸入區 */}
-                                <div className="bg-white p-8 rounded-[2rem] shadow-sm border space-y-6">
-                                    <div className="grid grid-cols-12 gap-3">
-                                        <input placeholder="品項名稱" value={quickInput.name} onChange={(e) => setQuickInput({...quickInput, name: e.target.value})} className="col-span-12 bg-slate-100 p-4 rounded-2xl text-sm font-bold border-none" />
-                                        <input type="number" placeholder="金額" value={quickInput.amount} onChange={(e) => setQuickInput({...quickInput, amount: e.target.value})} className="col-span-12 bg-slate-100 p-4 rounded-2xl text-sm font-bold border-none" />
+                                {/* 快速輸入 */}
+                                <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-6">
+                                    <div className="space-y-4">
+                                        <input placeholder="品項名稱 (例如: 晚餐、車資)" value={quickInput.name} onChange={(e) => setQuickInput({...quickInput, name: e.target.value})} className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none focus:ring-2 ring-slate-100 placeholder:text-slate-300" />
+                                        <div className="relative">
+                                            <span className="absolute left-5 top-1/2 -translate-y-1/2 font-black text-slate-300">$</span>
+                                            <input type="number" placeholder="金額" value={quickInput.amount} onChange={(e) => setQuickInput({...quickInput, amount: e.target.value})} className="w-full bg-slate-50 p-5 pl-10 rounded-2xl text-sm font-bold border-none focus:ring-2 ring-slate-100" />
+                                        </div>
                                     </div>
                                     <div className="space-y-3">
-                                        <span className="text-[9px] font-black text-slate-300 ml-1 uppercase">付款人</span>
+                                        <span className="text-[9px] font-black text-slate-300 ml-1 uppercase tracking-widest">誰付的錢？</span>
                                         <div className="flex flex-wrap gap-2">
                                             {participants.map(p => (
-                                                <button key={p} onClick={() => setQuickInput({...quickInput, payer: p})} className={`px-4 py-2 rounded-2xl text-xs font-bold border-2 ${quickInput.payer === p ? 'text-white' : 'bg-white text-slate-400 border-slate-100'}`} style={quickInput.payer === p ? { backgroundColor: themeColor.primary, borderColor: themeColor.primary } : {}}>{p}</button>
+                                                <button key={p} onClick={() => setQuickInput({...quickInput, payer: p})} className={`px-5 py-2.5 rounded-xl text-xs font-bold border-2 transition-all ${quickInput.payer === p ? 'text-white shadow-md scale-105' : 'bg-white text-slate-400 border-slate-50 hover:border-slate-100'}`} style={quickInput.payer === p ? { backgroundColor: themeColor.primary, borderColor: themeColor.primary } : {}}>{p}</button>
                                             ))}
                                         </div>
                                     </div>
-                                    <button onClick={handleQuickAdd} className="w-full text-white py-4 rounded-2xl font-black text-sm shadow-lg" style={{ backgroundColor: '#40514E' }}>新增支出</button>
+                                    <button onClick={handleQuickAdd} className="w-full text-white py-5 rounded-2xl font-black text-sm shadow-xl hover:brightness-110 active:scale-[0.98] transition-all" style={{ backgroundColor: '#40514E' }}>新增這筆支出</button>
                                 </div>
 
-                                {/* 摘要 */}
-                                <div className="bg-[#40514E] rounded-[2rem] p-8 text-white">
-                                    <p className="text-[10px] font-black opacity-50 uppercase tracking-widest mb-2">總計支出</p>
-                                    <h2 className="text-3xl font-black mb-6">${totalSpent.toLocaleString()}</h2>
-                                    <div className="space-y-3">
+                                {/* 統計摘要 */}
+                                <div className="bg-[#40514E] rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden">
+                                    <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16"></div>
+                                    <p className="text-[10px] font-black opacity-40 uppercase tracking-[0.2em] mb-2">總計支出總額</p>
+                                    <h2 className="text-4xl font-black mb-8">${totalSpent.toLocaleString()}</h2>
+                                    <div className="grid gap-3">
                                         {participants.map(p => {
                                             const b = balances[p] || 0;
                                             return (
-                                                <div key={p} className="flex justify-between items-center bg-white/10 p-4 rounded-2xl">
-                                                    <span className="font-bold">{p}</span>
-                                                    <span className="font-black" style={{ color: b >= 0 ? themeColor.primary : themeColor.secondary }}>{b >= 0 ? '+' : '-'}${Math.abs(b).toFixed(0)}</span>
+                                                <div key={p} className="flex justify-between items-center bg-white/5 backdrop-blur-sm p-5 rounded-2xl border border-white/5">
+                                                    <span className="font-bold text-sm">{p}</span>
+                                                    <div className="text-right">
+                                                        <span className="text-[10px] block opacity-40 font-black uppercase mb-0.5">{b >= 0 ? '預計應收' : '預計應付'}</span>
+                                                        <span className="font-black text-lg" style={{ color: b >= 0 ? themeColor.primary : themeColor.secondary }}>
+                                                            {b >= 0 ? '+' : '-'}${Math.abs(b).toFixed(0)}
+                                                        </span>
+                                                    </div>
                                                 </div>
                                             );
                                         })}
@@ -378,36 +379,60 @@
                                 </div>
 
                                 {items.length > 0 && (
-                                    <button onClick={handleSettlement} className="w-full text-white font-black py-5 rounded-[2rem] shadow-xl" style={{ backgroundColor: themeColor.primary }}>
-                                        結算帳本並產生收據
+                                    <button onClick={handleSettlement} className="w-full text-white font-black py-6 rounded-[2rem] shadow-2xl hover:brightness-105 active:scale-[0.98] transition-all" style={{ backgroundColor: themeColor.primary }}>
+                                        結算當前帳本
                                     </button>
                                 )}
                             </div>
                         ) : (
-                            <div className="space-y-6">
-                                <h2 className="text-xl font-black">歷史紀錄</h2>
+                            <div className="space-y-6 animate-in slide-in-from-right-4">
+                                <h2 className="text-2xl font-black px-2">歷史結算</h2>
                                 {settlements.map(s => (
-                                    <div key={s.id} onClick={() => { setLastSettlementData(s); setShowReceipt(true); }} className="bg-white p-6 rounded-3xl border cursor-pointer">
-                                        <div className="flex justify-between items-center">
-                                            <span className="font-bold">{new Date(s.settledAt).toLocaleDateString()}</span>
-                                            <span className="font-black text-lg">${s.totalSpent.toLocaleString()}</span>
+                                    <div key={s.id} className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex justify-between items-center group hover:shadow-md transition-shadow">
+                                        <div>
+                                            <span className="font-black block text-slate-800">{s.bookName}</span>
+                                            <span className="text-[10px] text-slate-400 font-bold uppercase">{new Date(s.settledAt).toLocaleDateString()}</span>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="font-black text-xl block">${s.totalSpent.toLocaleString()}</span>
+                                            <button className="text-[10px] font-black text-slate-300 uppercase hover:text-slate-500">查看詳情</button>
                                         </div>
                                     </div>
                                 ))}
                             </div>
                         )}
                     </main>
+
+                    {/* 收據彈出層 (簡化版) */}
+                    {showReceipt && lastSettlementData && (
+                        <div className="fixed inset-0 z-[300] bg-slate-900/90 flex items-center justify-center p-6 backdrop-blur-md">
+                            <div className="w-full max-w-sm space-y-4">
+                                <div className="bg-white p-10 rounded-[3rem] shadow-2xl space-y-8 text-center">
+                                    <div className="space-y-2">
+                                        <h2 className="text-2xl font-black tracking-tight">{lastSettlementData.bookName}</h2>
+                                        <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">結算清單已產生</p>
+                                    </div>
+                                    <div className="py-6 border-y border-slate-50 space-y-4">
+                                        {Object.entries(lastSettlementData.balances).map(([n, b]) => (
+                                            <div key={n} className="flex justify-between items-center font-bold">
+                                                <span className="text-slate-400">{n}</span>
+                                                <span className="text-lg" style={{ color: b >= 0 ? themeColor.primary : themeColor.secondary }}>
+                                                    {b >= 0 ? '應收' : '應付'} ${Math.abs(b).toFixed(0)}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <button onClick={() => setShowReceipt(false)} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-sm">我知道了</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
-
-        // Initialize Lucide icons after render
-        setTimeout(() => {
-            if (window.lucide) window.lucide.createIcons();
-        }, 1000);
     </script>
 </body>
 </html>
